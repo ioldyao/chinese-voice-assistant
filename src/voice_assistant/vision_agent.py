@@ -342,14 +342,17 @@ class VisionGuidedAgent:
             window_width = rect.width()
             window_height = rect.height()
 
-            # 计算绝对坐标（相对于窗口左上角）
-            x = int(window_width * x_percent / 100)
-            y = int(window_height * y_percent / 100)
+            # 计算全局屏幕坐标（窗口左上角 + 相对坐标）
+            absolute_x = rect.left + int(window_width * x_percent / 100)
+            absolute_y = rect.top + int(window_height * y_percent / 100)
 
-            print(f"      🎯 点击坐标: ({x}, {y}) - {element_label}")
+            print(f"      🎯 全局坐标: ({absolute_x}, {absolute_y}) - {element_label}")
 
-            # 使用 pywinauto 点击
-            window.click_input(coords=(x, y))
+            # 使用 pywinauto.mouse 进行全局坐标点击（更可靠）
+            import pywinauto.mouse as mouse
+            mouse.click(button='left', coords=(absolute_x, absolute_y))
+
+            print(f"      ✓ 已点击")
             return True
 
         except Exception as e:

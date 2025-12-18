@@ -28,21 +28,24 @@ class LLMController:
 可用操作（返回JSON格式）：
 1. 打开浏览器: {{"action": "open_browser", "url": "可选网址"}}
 2. 打开应用: {{"action": "open_app", "app": "应用名"}}
-3. 查看屏幕: {{"action": "understand_screen", "question": "要问的问题", "target": "截图范围"}}
-4. 浏览器输入: {{"action": "browser_input", "content": "要输入或搜索的内容"}}
-5. 窗口管理: {{"action": "window_control", "operation": "maximize/minimize/close", "target": "窗口标题模式"}}
+3. 点击元素: {{"action": "click_element", "element": "要点击的元素描述"}}
+4. 输入内容: {{"action": "input_text", "content": "要输入的内容"}}
+5. 查看屏幕: {{"action": "understand_screen", "question": "要问的问题", "target": "截图范围"}}
+6. 窗口管理: {{"action": "window_control", "operation": "maximize/minimize/close", "target": "窗口标题模式"}}
 
 重要规则：
+- 当用户说"点击XX"、"点XX"时，使用 click_element
+- 当用户说"输入XX"、"搜索XX"时，使用 input_text（会先点击聚焦再输入）
 - 当用户说"打开XX网站"、"打开浏览器"时，使用 open_browser
-- 当用户说"输入XX"、"搜索XX"、"访问XX"时，使用 browser_input（在浏览器地址栏输入）
 - 当用户说"最大化"、"最小化"、"关闭"窗口时，使用 window_control
 - 当用户问"浏览器显示什么"、"查看网页"时，使用 understand_screen
-- browser_input 会自动聚焦地址栏并输入内容，适用于导航和搜索
+- click_element 和 input_text 都会使用视觉识别自动定位元素
 
 示例：
-- "输入百度" → {{"action": "browser_input", "content": "baidu.com"}}
-- "搜索天气" → {{"action": "browser_input", "content": "天气"}}
-- "访问github" → {{"action": "browser_input", "content": "github.com"}}
+- "点击搜索框" → {{"action": "click_element", "element": "搜索框"}}
+- "点击按钮" → {{"action": "click_element", "element": "按钮"}}
+- "输入百度" → {{"action": "input_text", "content": "百度"}}
+- "搜索天气" → {{"action": "input_text", "content": "天气"}}
 - "打开浏览器" → {{"action": "open_browser", "url": ""}}
 - "查看浏览器" → {{"action": "understand_screen", "target": "browser", "question": "描述内容"}}
 
@@ -88,15 +91,23 @@ class LLMController:
         """简单关键词匹配"""
         text_lower = text.lower()
 
-        # 浏览器输入相关（优先级最高）
+        # 点击相关（最高优先级）
+        if any(w in text_lower for w in ["点击", "点一下", "点", "按"]):
+            for prefix in ["点击", "点一下", "点", "按"]:
+                if prefix in text:
+                    element = text.split(prefix, 1)[1].strip()
+                    if element:
+                        return {"action": "click_element", "element": element}
+            return {"action": "click_element", "element": text}
+
+        # 输入相关（优先级次高）
         if any(w in text_lower for w in ["输入", "搜索", "访问", "打开网址", "打开网站"]):
-            # 提取内容
             for prefix in ["输入", "搜索", "访问", "打开网址", "打开网站"]:
                 if prefix in text:
                     content = text.split(prefix, 1)[1].strip()
                     if content:
-                        return {"action": "browser_input", "content": content}
-            return {"action": "browser_input", "content": text}
+                        return {"action": "input_text", "content": content}
+            return {"action": "input_text", "content": text}
 
         # 窗口管理
         if "最大化" in text:
@@ -203,6 +214,48 @@ class LLMController:
                 print(f"✗ 浏览器操作失败")
                 if enable_voice:
                     self.tts.speak_async("抱歉，操作失败，请检查浏览器是否打开")
+
+        elif action == "click_element":
+            element = intent.get("element", "")
+            print(f"👆 点击元素: {element}")
+
+            if enable_voice:
+                self.tts.speak_async("好的，让我定位元素")
+
+            # 使用视觉引导点击
+            success = self.vision_agent.execute_with_vision(
+                user_command=f"点击: {element}",
+                target="active"  # 默认使用激活窗口
+            )
+
+            if success:
+                if enable_voice:
+                    self.tts.speak_async("已完成点击")
+            else:
+                print(f"✗ 点击失败")
+                if enable_voice:
+                    self.tts.speak_async("抱歉，未找到该元素")
+
+        elif action == "input_text":
+            content = intent.get("content", "")
+            print(f"⌨️ 输入内容: {content}")
+
+            if enable_voice:
+                self.tts.speak_async("好的，开始输入")
+
+            # 使用视觉引导输入（会先找到并点击输入框，再输入）
+            success = self.vision_agent.execute_with_vision(
+                user_command=f"输入文字: {content}",
+                target="active"
+            )
+
+            if success:
+                if enable_voice:
+                    self.tts.speak_async("输入完成")
+            else:
+                print(f"✗ 输入失败")
+                if enable_voice:
+                    self.tts.speak_async("抱歉，操作失败")
 
         elif action == "window_control":
             operation = intent.get("operation", "")
