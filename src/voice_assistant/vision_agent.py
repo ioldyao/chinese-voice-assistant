@@ -79,38 +79,39 @@ class VisionGuidedAgent:
                 import base64
                 image_data = base64.b64encode(f.read()).decode('utf-8')
 
+            # 使用与 vision.py 相同的 API 格式
+            messages = [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}}
+                ]
+            }]
+
             response = requests.post(
-                f"{self.api_url}/multimodal/generation",
+                f"{self.api_url}/chat/completions",
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json"
                 },
                 json={
                     "model": "qwen-vl-plus",
-                    "input": {
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": [
-                                    {"image": f"data:image/png;base64,{image_data}"},
-                                    {"text": prompt}
-                                ]
-                            }
-                        ]
-                    }
+                    "messages": messages,
+                    "max_tokens": 1000,
+                    "temperature": 0.1
                 },
                 timeout=30
             )
 
             if response.status_code == 200:
                 result = response.json()
-                content = result["output"]["choices"][0]["message"]["content"][0]["text"]
+                content = result["choices"][0]["message"]["content"]
                 # 提取JSON
                 content = content.replace("```json", "").replace("```", "").strip()
                 elements_info = json.loads(content)
                 return elements_info
             else:
-                print(f"Vision 分析失败: {response.status_code}")
+                print(f"Vision 分析失败: {response.status_code} - {response.text}")
                 return {}
 
         except Exception as e:

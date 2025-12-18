@@ -125,14 +125,19 @@ class SmartWakeWordSystem:
             kws_stream = self.kws_model.create_stream()
 
             while self.running:
-                # 跳过TTS播放期间的录音
-                if self.controller.tts.is_playing:
-                    time.sleep(0.01)
-                    continue
-
                 # 读取音频
                 audio_bytes = stream.read(CHUNK_SIZE, exception_on_overflow=False)
                 audio_data = np.frombuffer(audio_bytes, dtype=np.float32)
+
+                # TTS播放期间仍然监听，但需要更高音量才触发（允许打断）
+                if self.controller.tts.is_playing:
+                    # 检测音量峰值，判断是否是真实的语音打断
+                    volume = np.sqrt(np.mean(audio_data**2))
+                    # 如果音量过低（可能是TTS回声），跳过检测
+                    if volume < 0.05:  # 阈值可调整
+                        time.sleep(0.01)
+                        continue
+                    # 音量足够高，可能是用户打断，继续检测
 
                 # 喂给KWS
                 kws_stream.accept_waveform(self.sample_rate, audio_data)
@@ -146,6 +151,10 @@ class SmartWakeWordSystem:
 
                 if result:
                     print(f"\n✨ 检测到唤醒词: {result}")
+
+                    # 打断正在播放的TTS
+                    if self.controller.tts.is_playing:
+                        self.controller.tts.stop()
 
                     # 提示音
                     try:

@@ -26,6 +26,7 @@ class TTSManager:
         self.audio_dir = TTS_AUDIO_DIR
         self.audio_dir.mkdir(parents=True, exist_ok=True)
         self.is_playing = False
+        self.should_stop = False  # 打断标志
 
         # 短文本TTS（dashscope，限制300字）
         try:
@@ -43,6 +44,8 @@ class TTSManager:
         """使用PyAudio直接播放音频文件"""
         try:
             self.is_playing = True
+            self.should_stop = False
+
             with wave.open(str(audio_file), 'rb') as wf:
                 stream = self.p.open(
                     format=self.p.get_format_from_width(wf.getsampwidth()),
@@ -53,18 +56,22 @@ class TTSManager:
 
                 chunk_size = 1024
                 data = wf.readframes(chunk_size)
-                while data:
+                while data and not self.should_stop:  # 检查打断标志
                     stream.write(data)
                     data = wf.readframes(chunk_size)
 
                 stream.stop_stream()
                 stream.close()
 
+            if self.should_stop:
+                print("   [TTS被打断]")
+
             time.sleep(0.3)
         except Exception as e:
             print(f"播放音频失败: {e}")
         finally:
             self.is_playing = False
+            self.should_stop = False
 
     def speak(self, text, voice="Cherry", wait=True):
         """智能语音播报：自动选择短文本或长文本TTS"""
@@ -258,6 +265,11 @@ class TTSManager:
             args=(text, voice, False),
             daemon=True
         ).start()
+
+    def stop(self):
+        """停止当前播放"""
+        if self.is_playing:
+            self.should_stop = True
 
     def _delete_file(self, filepath):
         """删除临时文件"""
