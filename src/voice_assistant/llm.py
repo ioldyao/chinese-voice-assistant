@@ -222,10 +222,14 @@ class LLMController:
             if enable_voice:
                 self.tts.speak_async("好的，让我定位元素")
 
+            # 智能选择截图目标
+            # 如果当前有浏览器在运行，优先使用浏览器截图
+            target = "browser"  # 默认浏览器
+
             # 使用视觉引导点击
             success = self.vision_agent.execute_with_vision(
                 user_command=f"点击: {element}",
-                target="active"  # 默认使用激活窗口
+                target=target
             )
 
             if success:
@@ -246,7 +250,7 @@ class LLMController:
             # 使用视觉引导输入（会先找到并点击输入框，再输入）
             success = self.vision_agent.execute_with_vision(
                 user_command=f"输入文字: {content}",
-                target="active"
+                target="browser"  # 输入通常在浏览器中
             )
 
             if success:

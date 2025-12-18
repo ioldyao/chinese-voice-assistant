@@ -173,7 +173,10 @@ class WindowManager:
     def get_active_window(self) -> Optional[object]:
         """获取当前激活窗口"""
         try:
-            return self.desktop.top_window()
+            # 使用 Desktop.get_active() 获取激活窗口
+            from pywinauto import Desktop as DesktopClass
+            active = DesktopClass(backend=self.backend).get_active()
+            return active
         except Exception as e:
             self.logger.error(f"获取激活窗口失败: {e}")
             return None

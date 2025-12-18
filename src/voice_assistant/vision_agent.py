@@ -218,13 +218,14 @@ class VisionGuidedAgent:
             print(f"规划操作失败: {e}")
             return {"actions": [], "explanation": f"规划失败: {e}"}
 
-    def execute_plan(self, plan: Dict, screen_analysis: Dict = None) -> bool:
+    def execute_plan(self, plan: Dict, screen_analysis: Dict = None, target: str = "browser") -> bool:
         """
         执行操作计划
 
         Args:
             plan: 操作计划
             screen_analysis: 屏幕分析结果（用于获取窗口尺寸和元素坐标）
+            target: 截图目标（用于确定窗口对象）
 
         Returns:
             是否成功
@@ -245,7 +246,7 @@ class VisionGuidedAgent:
                 if action_type == "click_element":
                     # 鼠标点击元素
                     element_label = params.get("element", "")
-                    success = self._click_element_by_label(element_label, screen_analysis)
+                    success = self._click_element_by_label(element_label, screen_analysis, target)
 
                 elif action_type == "click_shortcut":
                     # 使用快捷键
@@ -289,13 +290,14 @@ class VisionGuidedAgent:
 
         return True
 
-    def _click_element_by_label(self, element_label: str, screen_analysis: Dict) -> bool:
+    def _click_element_by_label(self, element_label: str, screen_analysis: Dict, target: str = "browser") -> bool:
         """
         通过元素标签点击元素
 
         Args:
             element_label: 元素标签或描述
             screen_analysis: 屏幕分析结果
+            target: 截图目标（用于确定窗口对象）
 
         Returns:
             是否成功
@@ -331,10 +333,23 @@ class VisionGuidedAgent:
             print(f"      ⚠️ 元素缺少坐标信息: {element_label}")
             return False
 
-        # 获取窗口对象和尺寸
-        window = self.system_controller.window_manager.get_active_window()
+        # 根据 target 获取正确的窗口对象
+        window = None
+        if target == "browser":
+            # 查找浏览器窗口
+            browser_patterns = [r".*Chrome.*", r".*Edge.*", r".*Firefox.*"]
+            for pattern in browser_patterns:
+                window = self.system_controller.window_manager.find_window_by_title(pattern)
+                if window:
+                    break
+        elif target == "active":
+            window = self.system_controller.window_manager.get_active_window()
+        else:
+            # 默认使用激活窗口
+            window = self.system_controller.window_manager.get_active_window()
+
         if not window:
-            print(f"      ⚠️ 无法获取激活窗口")
+            print(f"      ⚠️ 无法获取窗口对象 (target={target})")
             return False
 
         try:
@@ -428,7 +443,7 @@ class VisionGuidedAgent:
 
         # 4. 执行
         print("   🚀 开始执行...")
-        success = self.execute_plan(plan, screen_analysis)
+        success = self.execute_plan(plan, screen_analysis, target)  # 传递 target
 
         if success:
             print("   ✅ 执行完成！")
