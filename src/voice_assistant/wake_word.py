@@ -156,6 +156,30 @@ class SmartWakeWordSystem:
                 if result:
                     print(f"\n✨ 检测到唤醒词: {result}")
 
+                    # 检查是否正在执行任务
+                    if self.agent.is_executing:
+                        print("⚠️ 正在执行任务中，发送中断请求...")
+                        self.agent.interrupt_flag = True
+
+                        # 打断正在播放的TTS
+                        if self.agent.tts.is_playing:
+                            self.agent.tts.stop()
+
+                        # 等待任务中断（最多等待5秒）
+                        wait_count = 0
+                        while self.agent.is_executing and wait_count < 50:
+                            time.sleep(0.1)
+                            wait_count += 1
+
+                        if self.agent.is_executing:
+                            print("⚠️ 中断超时，任务可能仍在执行")
+                        else:
+                            print("✓ 任务已中断")
+
+                        # 重置KWS流，等待下一次唤醒
+                        kws_stream = self.kws_model.create_stream()
+                        continue
+
                     # 打断正在播放的TTS
                     if self.agent.tts.is_playing:
                         self.agent.tts.stop()

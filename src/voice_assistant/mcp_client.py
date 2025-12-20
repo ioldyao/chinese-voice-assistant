@@ -393,8 +393,26 @@ class MCPManager:
     async def stop_all_async(self):
         """停止所有 MCP Server（异步）"""
         try:
-            await self.exit_stack.aclose()
+            # 先清空 servers 字典，避免重复关闭
+            servers_to_close = list(self.servers.values())
             self.servers.clear()
+
+            # 关闭所有会话
+            for client in servers_to_close:
+                try:
+                    if client.session:
+                        # 不要调用 aclose，直接清理
+                        client.session = None
+                except Exception as e:
+                    self.logger.warning(f"关闭 client 失败: {e}")
+
+            # 最后关闭 exit_stack
+            try:
+                await self.exit_stack.aclose()
+            except Exception as e:
+                # 忽略关闭时的错误
+                self.logger.debug(f"关闭 exit_stack 时出现异常（可忽略）: {e}")
+
             self.logger.info("✓ 所有 MCP Server 已停止")
         except Exception as e:
             self.logger.error(f"停止服务器失败: {e}")

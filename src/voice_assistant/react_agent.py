@@ -161,7 +161,7 @@ class ReactAgent:
         # Vision（视觉理解）
         self.vision = VisionUnderstanding(api_url, api_key)
 
-        # React 历史记录
+        # React 历史记录（短期记忆：当前对话）
         self.history: List[ReActStep] = []
 
         # 可用工具列表
@@ -170,16 +170,29 @@ class ReactAgent:
         # 最大步数（防止死循环，降低以提升响应速度）
         self.max_steps = 5
 
+        # 长期记忆（跨会话持久化）
+        self.long_term_memory = {
+            "summary": None,  # LLM 自动生成的状态总结
+            "last_update": None,  # 最后更新时间
+        }
+
+        # 中断标志（用于在执行中检测唤醒词）
+        self.interrupt_flag = False
+
+        # 执行状态标志（标识是否正在执行任务）
+        self.is_executing = False
+
     def start(self) -> bool:
         """启动 Agent（启动 MCP Servers）"""
         print("\n⏳ 正在启动 MCP Servers...")
 
         # 配置 MCP Servers
         servers = [
-            # Windows-MCP: 系统级操作（必需）
-            ("windows", "uvx", ["windows-mcp"], 60),
-            # Playwright-MCP: 浏览器操作（可选，首次启动较慢）
-            ("playwright", "npx", ["@playwright/mcp@latest"], 120)  # 增加到120秒
+            # Windows-MCP: 系统级操作（暂时禁用）
+            # ("windows", "uvx", ["windows-mcp"], 60),
+
+            # Playwright-MCP: 浏览器操作（主要使用）
+            ("playwright", "npx", ["@playwright/mcp@latest"], 120)
         ]
 
         success = self.mcp.start(servers)
@@ -224,17 +237,26 @@ class ReactAgent:
         """
         self.logger.info(f"🤖 开始执行: {user_command}")
 
-        if enable_voice:
-            self.tts.speak_async("好的，让我来处理")
+        # 标记为执行中
+        self.is_executing = True
+        self.interrupt_flag = False  # 重置中断标志
 
-        # 判断是否需要视觉理解
-        if self._needs_vision_understanding(user_command):
-            self.logger.info("使用 Vision 模式（视觉理解）")
-            print("💡 检测到视觉理解任务，使用 Vision API...")
-            return self._vision_mode(user_command, enable_voice)
-        else:
-            self.logger.info("使用 React 模式（操作执行）")
-            return self._react_mode(user_command, enable_voice)
+        try:
+            if enable_voice:
+                self.tts.speak_async("好的，让我来处理")
+
+            # 判断是否需要视觉理解
+            if self._needs_vision_understanding(user_command):
+                self.logger.info("使用 Vision 模式（视觉理解）")
+                print("💡 检测到视觉理解任务，使用 Vision API...")
+                return self._vision_mode(user_command, enable_voice)
+            else:
+                self.logger.info("使用 React 模式（操作执行）")
+                return self._react_mode(user_command, enable_voice)
+        finally:
+            # 执行完成，清除执行标志
+            self.is_executing = False
+            self.interrupt_flag = False
 
     def _needs_vision_understanding(self, command: str) -> bool:
         """
@@ -433,6 +455,19 @@ class ReactAgent:
 
         # React 循环
         for step in range(self.max_steps):
+            # 检查中断标志
+            if self.interrupt_flag:
+                print("\n⚠️ 检测到中断请求，停止执行")
+                self.logger.warning("用户中断执行")
+                if enable_voice:
+                    self.tts.speak_async("已停止")
+                return {
+                    "success": False,
+                    "message": "用户中断",
+                    "steps": step,
+                    "interrupted": True
+                }
+
             print(f"\n--- 步骤 {step + 1} ---")
             self.logger.info(f"\n--- Step {step + 1} ---")
 
@@ -448,6 +483,10 @@ class ReactAgent:
             if parsed_action.get("done", False):
                 print("✅ 任务完成")
                 self.logger.info("✅ 任务完成")
+
+                # 更新长期记忆（让 LLM 自动总结当前状态）
+                self._update_memory_async()
+
                 if enable_voice:
                     final_answer = parsed_action.get("final_answer", "已完成")
                     self.tts.speak_async(final_answer)
@@ -464,6 +503,19 @@ class ReactAgent:
                 parsed_action["action"],
                 parsed_action["action_input"]
             )
+
+            # 执行后再次检查中断
+            if self.interrupt_flag:
+                print("\n⚠️ 检测到中断请求，停止执行")
+                self.logger.warning("用户中断执行")
+                if enable_voice:
+                    self.tts.speak_async("已停止")
+                return {
+                    "success": False,
+                    "message": "用户中断",
+                    "steps": step + 1,
+                    "interrupted": True
+                }
 
             # 4. 显示结果
             if observation and observation.success:
@@ -652,10 +704,15 @@ Final Answer: [总结结果]
     def _build_react_prompt(self, user_command: str) -> str:
         """构造 ReAct 提示词"""
 
-        # 历史记录
+        # 长期记忆（跨会话状态）
+        memory_context = ""
+        if self.long_term_memory["summary"]:
+            memory_context = f"\n当前状态记忆:\n{self.long_term_memory['summary']}\n"
+
+        # 短期记忆（本次对话步骤）
         history_text = ""
         if self.history:
-            history_text = "\n已执行步骤:\n"
+            history_text = "\n本次对话已执行步骤:\n"
             for i, step in enumerate(self.history[-3:], 1):  # 只显示最近3步
                 history_text += f"\nStep {i}:\n"
                 history_text += f"Thought: {step.thought}\n"
@@ -664,9 +721,15 @@ Final Answer: [总结结果]
                 history_text += f"Observation: {step.observation}\n"
 
         prompt = f"""用户任务: {user_command}
+{memory_context}
 {history_text}
 
-请分析当前情况，决定下一步动作。"""
+请分析当前情况，决定下一步动作。
+
+重要提示：
+1. 如果记忆中显示浏览器已在目标页面，不要重复导航
+2. "输入XXX" 指的是在输入框/搜索框中输入文字，不是访问网站
+3. 先用 browser_snapshot 了解页面状态，再执行具体操作"""
 
         return prompt
 
@@ -701,3 +764,61 @@ Final Answer: [总结结果]
             import traceback
             traceback.print_exc()
             return MCPResponse(success=False, error=str(e))
+
+    def _update_memory_async(self):
+        """更新长期记忆（让 LLM 自动总结当前状态）"""
+        try:
+            # 构造总结提示词
+            recent_actions = ""
+            if self.history:
+                recent_actions = "\n最近的操作:\n"
+                for i, step in enumerate(self.history[-5:], 1):  # 最近5步
+                    recent_actions += f"{i}. {step.action}"
+                    if step.action_input:
+                        recent_actions += f"({step.action_input})"
+                    recent_actions += f" → {step.observation[:100]}\n"
+
+            summarize_prompt = f"""请用 1-2 句话总结当前状态（浏览器位置、最后操作等），用于下次对话参考。
+
+{recent_actions}
+
+格式示例：
+- 浏览器当前在百度首页，刚刚点击了 AI生图 按钮
+- 浏览器在 Google 搜索结果页，搜索关键词为"Python教程"
+
+只返回总结内容，不要其他文字："""
+
+            # 调用 LLM 生成总结
+            response = requests.post(
+                f"{self.api_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "qwen-plus",
+                    "messages": [
+                        {"role": "user", "content": summarize_prompt}
+                    ],
+                    "max_tokens": 200,
+                    "temperature": 0.3
+                },
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                summary = result["choices"][0]["message"]["content"].strip()
+
+                # 更新长期记忆
+                self.long_term_memory["summary"] = summary
+                import time
+                self.long_term_memory["last_update"] = time.time()
+
+                print(f"💾 状态已保存: {summary}")
+                self.logger.info(f"更新记忆: {summary}")
+            else:
+                self.logger.warning(f"生成记忆总结失败: {response.status_code}")
+
+        except Exception as e:
+            self.logger.warning(f"更新记忆失败: {e}")
