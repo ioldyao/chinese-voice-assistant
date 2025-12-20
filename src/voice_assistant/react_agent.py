@@ -306,12 +306,40 @@ class ReactAgent:
             print(f"📸 正在截图 ({target})...")
             screenshot_path = self._take_screenshot(target)
 
+            # 检查中断（截图后）
+            if self.interrupt_flag:
+                print("⚠️ 检测到中断请求，取消分析")
+                try:
+                    Path(screenshot_path).unlink()
+                except:
+                    pass
+                return {
+                    "success": False,
+                    "message": "用户中断",
+                    "mode": "vision",
+                    "interrupted": True
+                }
+
             # 2. 调用 Vision API
             print("🔍 正在分析图像...")
             analysis = self.vision.understand_screen(
                 screenshot_path,
                 question=user_command
             )
+
+            # 检查中断（API返回后）
+            if self.interrupt_flag:
+                print("⚠️ 检测到中断请求，停止输出")
+                try:
+                    Path(screenshot_path).unlink()
+                except:
+                    pass
+                return {
+                    "success": False,
+                    "message": "用户中断",
+                    "mode": "vision",
+                    "interrupted": True
+                }
 
             # 输出分析结果
             if analysis:
