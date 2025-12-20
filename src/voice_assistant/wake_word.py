@@ -1,5 +1,6 @@
 """智能语音唤醒系统 - 双阶段识别版"""
 import time
+import threading
 import numpy as np
 import pyaudio
 import sherpa_onnx
@@ -26,6 +27,9 @@ class SmartWakeWordSystem:
         self.running = False
         self.sample_rate = SAMPLE_RATE
         self.enable_voice = enable_voice
+
+        # 执行线程锁（确保同一时间只有一个命令在执行）
+        self.execution_lock = threading.Lock()
 
         print("正在初始化智能语音助手...")
 
@@ -194,8 +198,12 @@ class SmartWakeWordSystem:
                     if self.enable_voice:
                         self.agent.tts.speak_async("我在")
 
-                    # 进入阶段2
-                    self._enter_command_mode(p)
+                    # 启动命令处理线程（非阻塞）
+                    command_thread = threading.Thread(
+                        target=self._handle_command_in_thread,
+                        daemon=True
+                    )
+                    command_thread.start()
 
                     # 重置KWS流
                     kws_stream = self.kws_model.create_stream()
@@ -212,6 +220,26 @@ class SmartWakeWordSystem:
             print("正在停止 Windows-MCP Server...")
             self.agent.stop()
             print("✓ Windows-MCP Server 已停止")
+
+    def _handle_command_in_thread(self):
+        """在单独线程中处理命令（非阻塞）"""
+        # 尝试获取执行锁（如果已有命令在执行，直接返回）
+        if not self.execution_lock.acquire(blocking=False):
+            print("⚠️ 已有命令正在执行，忽略本次唤醒")
+            return
+
+        try:
+            # 创建独立的PyAudio实例（避免与主循环冲突）
+            p = pyaudio.PyAudio()
+            self._enter_command_mode(p)
+            p.terminate()
+        except Exception as e:
+            print(f"命令处理错误: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            # 释放锁
+            self.execution_lock.release()
 
     def _enter_command_mode(self, pyaudio_instance):
         """阶段2: 录音识别"""
