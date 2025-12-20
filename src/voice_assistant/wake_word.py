@@ -13,6 +13,7 @@ from .config import (
     RECORD_SECONDS,
     SILENCE_THRESHOLD,
     MAX_SILENCE_FRAMES,
+    MIN_RECORD_FRAMES,
     DEFAULT_WAKE_WORDS,
     CONFIG_DIR,
 )
@@ -196,7 +197,8 @@ class SmartWakeWordSystem:
                         pass
 
                     if self.enable_voice:
-                        self.agent.tts.speak_async("我在")
+                        # 使用简短清晰的提示，减少等待时间
+                        self.agent.tts.speak_async("请讲")
 
                     # 启动命令处理线程（非阻塞）
                     command_thread = threading.Thread(
@@ -263,17 +265,21 @@ class SmartWakeWordSystem:
 
             print("🎙️ 录音中...")
             silence_count = 0
+            frame_count = 0  # 记录总帧数
 
             for i in range(0, int(self.sample_rate / 1024 * RECORD_SECONDS)):
                 audio_bytes = stream.read(1024, exception_on_overflow=False)
                 audio_data = np.frombuffer(audio_bytes, dtype=np.float32)
                 audio_buffer.append(audio_data)
+                frame_count += 1
 
                 # 静音检测
                 volume = np.sqrt(np.mean(audio_data**2))
                 if volume < SILENCE_THRESHOLD:
                     silence_count += 1
-                    if silence_count > MAX_SILENCE_FRAMES and len(audio_buffer) > 10:
+                    # 添加最小录音保护：前MIN_RECORD_FRAMES帧不触发静音停止
+                    # 确保至少录够MIN_RECORD_FRAMES帧才开始检测静音
+                    if silence_count > MAX_SILENCE_FRAMES and frame_count > MIN_RECORD_FRAMES:
                         print("   检测到静音，停止录音")
                         break
                 else:

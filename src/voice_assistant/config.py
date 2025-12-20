@@ -27,9 +27,10 @@ TTS_CACHE_TIMEOUT_SHORT = 10  # 短文本缓存清理时间（秒）
 TTS_CACHE_TIMEOUT_LONG = 30   # 长文本缓存清理时间（秒）
 
 # 录音配置
-RECORD_SECONDS = 5
-SILENCE_THRESHOLD = 0.02
-MAX_SILENCE_FRAMES = 40
+RECORD_SECONDS = 10  # 最大录音时长（秒），支持更长的指令
+SILENCE_THRESHOLD = 0.02  # 静音阈值
+MAX_SILENCE_FRAMES = 20  # 连续静音帧数（约1.3秒），说完即停
+MIN_RECORD_FRAMES = 15  # 最小录音保护帧数（约1秒），防止误判
 
 # 唤醒词配置（格式：拼音音节 @中文）
 DEFAULT_WAKE_WORDS = [
