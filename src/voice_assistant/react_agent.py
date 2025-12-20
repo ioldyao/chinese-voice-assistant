@@ -167,8 +167,8 @@ class ReactAgent:
         # 可用工具列表
         self.available_tools: List[Dict[str, Any]] = []
 
-        # 最大步数（防止死循环，降低以提升响应速度）
-        self.max_steps = 5
+        # 最大步数（防止死循环）
+        self.max_steps = 15
 
         # 长期记忆（跨会话持久化）
         self.long_term_memory = {
@@ -663,8 +663,8 @@ Final Answer: [总结结果]
 3. 不要混用 State-Tool 和 browser_* 的 ref 系统
 4. 优先使用快捷键和简单操作，避免复杂流程
 5. 如果任务不清晰或无法理解，直接返回 Final Answer 说明原因
-6. 最多 5 步必须完成，保持高效
-7. 如果连续失败 2 次，立即停止并返回 Final Answer"""
+6. 最多 15 步必须完成，但应尽快完成任务
+7. 如果连续失败 3 次，立即停止并返回 Final Answer"""
 
     def _format_tool_descriptions(self) -> str:
         """格式化工具描述"""
