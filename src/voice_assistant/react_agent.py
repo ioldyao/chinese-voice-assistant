@@ -485,8 +485,7 @@ class ReactAgent:
                 self.logger.info("✅ 任务完成")
 
                 # 更新长期记忆（让 LLM 自动总结当前状态）
-                # 暂时禁用：LLM总结容易出错，会被示例误导
-                # self._update_memory_async()
+                self._update_memory_async()
 
                 if enable_voice:
                     final_answer = parsed_action.get("final_answer", "已完成")
@@ -705,29 +704,43 @@ Final Answer: [总结结果]
     def _build_react_prompt(self, user_command: str) -> str:
         """构造 ReAct 提示词"""
 
-        # 长期记忆（暂时禁用，避免LLM总结错误）
-        # memory_context = ""
-        # if self.long_term_memory["summary"]:
-        #     memory_context = f"\n当前状态记忆:\n{self.long_term_memory['summary']}\n"
+        # 长期记忆（跨对话的状态）
+        memory_context = ""
+        if self.long_term_memory["summary"]:
+            memory_context = f"\n上次状态: {self.long_term_memory['summary']}\n"
 
-        # 短期记忆（本次对话步骤）
+        # 短期记忆（5分钟内的历史步骤）
         history_text = ""
         if self.history:
-            history_text = "\n本次对话已执行步骤:\n"
-            for i, step in enumerate(self.history[-3:], 1):  # 只显示最近3步
-                history_text += f"\nStep {i}:\n"
-                history_text += f"Thought: {step.thought}\n"
-                history_text += f"Action: {step.action}\n"
-                history_text += f"Action Input: {step.action_input}\n"
-                history_text += f"Observation: {step.observation}\n"
+            import time
+            current_time = time.time()
+            recent_steps = []
+
+            # 筛选5分钟内的步骤
+            for step in reversed(self.history):
+                # 简单实现：假设每步约10-30秒，取最近10步作为5分钟窗口
+                if len(recent_steps) >= 10:
+                    break
+                recent_steps.append(step)
+
+            recent_steps.reverse()  # 恢复时间顺序
+
+            if recent_steps:
+                history_text = "\n最近的操作历史:\n"
+                for i, step in enumerate(recent_steps, 1):
+                    history_text += f"\nStep {i}:\n"
+                    history_text += f"Thought: {step.thought}\n"
+                    history_text += f"Action: {step.action}\n"
+                    history_text += f"Action Input: {step.action_input}\n"
+                    history_text += f"Observation: {step.observation}\n"
 
         prompt = f"""用户任务: {user_command}
-{history_text}
+{memory_context}{history_text}
 
 请分析当前情况，决定下一步动作。
 
 重要提示：
-1. 先用 browser_snapshot 了解页面状态，再执行具体操作
+1. 如果上次状态显示已在目标页面，先用 browser_snapshot 确认，避免重复操作
 2. "输入XXX" 指的是在输入框/搜索框中输入文字，不是访问网站"""
 
         return prompt
@@ -770,22 +783,23 @@ Final Answer: [总结结果]
             # 构造总结提示词
             recent_actions = ""
             if self.history:
-                recent_actions = "\n最近的操作:\n"
+                recent_actions = "最近的操作:\n"
                 for i, step in enumerate(self.history[-5:], 1):  # 最近5步
                     recent_actions += f"{i}. {step.action}"
                     if step.action_input:
-                        recent_actions += f"({step.action_input})"
+                        recent_actions += f" {step.action_input}"
                     recent_actions += f" → {step.observation[:100]}\n"
 
-            summarize_prompt = f"""请用 1-2 句话总结当前状态（浏览器位置、最后操作等），用于下次对话参考。
+            summarize_prompt = f"""请用1句话总结当前浏览器状态，包括：正在哪个网站、做了什么操作。
 
 {recent_actions}
 
-格式示例：
-- 浏览器当前在百度首页，刚刚点击了 AI生图 按钮
-- 浏览器在 Google 搜索结果页，搜索关键词为"Python教程"
+要求：
+- 基于以上实际操作生成总结
+- 只返回1句话，不要其他内容
+- 格式：浏览器当前在[网站]，[最后操作]
 
-只返回总结内容，不要其他文字："""
+总结："""
 
             # 调用 LLM 生成总结
             response = requests.post(
@@ -799,8 +813,8 @@ Final Answer: [总结结果]
                     "messages": [
                         {"role": "user", "content": summarize_prompt}
                     ],
-                    "max_tokens": 200,
-                    "temperature": 0.3
+                    "max_tokens": 100,
+                    "temperature": 0.1  # 降低温度，减少随机性
                 },
                 timeout=10
             )
@@ -809,12 +823,15 @@ Final Answer: [总结结果]
                 result = response.json()
                 summary = result["choices"][0]["message"]["content"].strip()
 
+                # 清理可能的前缀
+                summary = summary.replace("总结：", "").strip()
+
                 # 更新长期记忆
                 self.long_term_memory["summary"] = summary
                 import time
                 self.long_term_memory["last_update"] = time.time()
 
-                print(f"💾 状态已保存: {summary}")
+                print(f"💾 记忆: {summary}")
                 self.logger.info(f"更新记忆: {summary}")
             else:
                 self.logger.warning(f"生成记忆总结失败: {response.status_code}")
