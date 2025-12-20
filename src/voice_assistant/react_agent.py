@@ -485,7 +485,8 @@ class ReactAgent:
                 self.logger.info("✅ 任务完成")
 
                 # 更新长期记忆（让 LLM 自动总结当前状态）
-                self._update_memory_async()
+                # 暂时禁用：LLM总结容易出错，会被示例误导
+                # self._update_memory_async()
 
                 if enable_voice:
                     final_answer = parsed_action.get("final_answer", "已完成")
@@ -704,10 +705,10 @@ Final Answer: [总结结果]
     def _build_react_prompt(self, user_command: str) -> str:
         """构造 ReAct 提示词"""
 
-        # 长期记忆（跨会话状态）
-        memory_context = ""
-        if self.long_term_memory["summary"]:
-            memory_context = f"\n当前状态记忆:\n{self.long_term_memory['summary']}\n"
+        # 长期记忆（暂时禁用，避免LLM总结错误）
+        # memory_context = ""
+        # if self.long_term_memory["summary"]:
+        #     memory_context = f"\n当前状态记忆:\n{self.long_term_memory['summary']}\n"
 
         # 短期记忆（本次对话步骤）
         history_text = ""
@@ -721,15 +722,13 @@ Final Answer: [总结结果]
                 history_text += f"Observation: {step.observation}\n"
 
         prompt = f"""用户任务: {user_command}
-{memory_context}
 {history_text}
 
 请分析当前情况，决定下一步动作。
 
 重要提示：
-1. 如果记忆中显示浏览器已在目标页面，不要重复导航
-2. "输入XXX" 指的是在输入框/搜索框中输入文字，不是访问网站
-3. 先用 browser_snapshot 了解页面状态，再执行具体操作"""
+1. 先用 browser_snapshot 了解页面状态，再执行具体操作
+2. "输入XXX" 指的是在输入框/搜索框中输入文字，不是访问网站"""
 
         return prompt
 

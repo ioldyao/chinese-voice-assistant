@@ -189,16 +189,15 @@ class SmartWakeWordSystem:
                     if self.agent.tts.is_playing:
                         self.agent.tts.stop()
 
-                    # 提示音
+                    # 提示音（Beep后用户就可以开始说话）
                     try:
                         import winsound
-                        winsound.Beep(800, 200)
+                        # 双提示音：第一声表示唤醒，第二声表示开始录音
+                        winsound.Beep(800, 100)
+                        time.sleep(0.1)
+                        winsound.Beep(1000, 100)
                     except:
                         pass
-
-                    if self.enable_voice:
-                        # 使用简短清晰的提示，减少等待时间
-                        self.agent.tts.speak_async("请讲")
 
                     # 启动命令处理线程（非阻塞）
                     command_thread = threading.Thread(
@@ -247,9 +246,8 @@ class SmartWakeWordSystem:
         """阶段2: 录音识别"""
         print("💬 请说出指令...")
 
-        # 等待TTS播完
-        while self.agent.tts.is_playing:
-            time.sleep(0.1)
+        # 短暂延迟，让用户听到Beep后准备说话
+        time.sleep(0.3)
 
         # 录音参数
         audio_buffer = []
@@ -266,6 +264,7 @@ class SmartWakeWordSystem:
             print("🎙️ 录音中...")
             silence_count = 0
             frame_count = 0  # 记录总帧数
+            has_speech = False  # 是否检测到有效语音
 
             for i in range(0, int(self.sample_rate / 1024 * RECORD_SECONDS)):
                 audio_bytes = stream.read(1024, exception_on_overflow=False)
@@ -273,17 +272,21 @@ class SmartWakeWordSystem:
                 audio_buffer.append(audio_data)
                 frame_count += 1
 
-                # 静音检测
+                # 音量检测
                 volume = np.sqrt(np.mean(audio_data**2))
-                if volume < SILENCE_THRESHOLD:
+
+                # 检测到有效语音（音量超过阈值）
+                if volume >= SILENCE_THRESHOLD:
+                    has_speech = True
+                    silence_count = 0
+                else:
+                    # 静音帧
                     silence_count += 1
-                    # 添加最小录音保护：前MIN_RECORD_FRAMES帧不触发静音停止
-                    # 确保至少录够MIN_RECORD_FRAMES帧才开始检测静音
-                    if silence_count > MAX_SILENCE_FRAMES and frame_count > MIN_RECORD_FRAMES:
+
+                    # 只有在检测到有效语音后，才开始静音计数停止逻辑
+                    if has_speech and silence_count > MAX_SILENCE_FRAMES:
                         print("   检测到静音，停止录音")
                         break
-                else:
-                    silence_count = 0
 
             stream.stop_stream()
             stream.close()
