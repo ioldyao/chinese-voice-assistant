@@ -8,7 +8,7 @@
 from .wake_word import SmartWakeWordSystem
 from .tts import TTSManager
 from .vision import VisionUnderstanding
-from .mcp_client import MCPClient, MCPClientSync, MCPManager, MCPManagerSync, MCPResponse
+from .mcp_client import MCPClient, MCPManager, MCPResponse
 from .react_agent import ReactAgent, ReActParser, ReActStep
 
 # pipecat_main 使用延迟导入，避免初始化时的阻塞
@@ -20,9 +20,7 @@ __all__ = [
     "TTSManager",
     "VisionUnderstanding",
     "MCPClient",
-    "MCPClientSync",
     "MCPManager",
-    "MCPManagerSync",
     "MCPResponse",
     "ReactAgent",
     "ReActParser",

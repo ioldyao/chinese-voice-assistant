@@ -16,6 +16,7 @@ from .pipecat_adapters import (
     SherpaASRProcessor,
     ReactAgentProcessor,
     PiperTTSProcessor,
+    VisionProcessor,
 )
 
 # 导入现有组件
@@ -133,8 +134,12 @@ async def create_pipecat_pipeline():
     """
     创建 Pipecat Pipeline
 
-    Phase 1: 线性 Pipeline（不优化并行）
-    麦克风 → KWS → ASR → React Agent → TTS → 扬声器
+    Phase 2: 集成 Vision - 完全异步架构
+    麦克风 → KWS → ASR → Vision (路由判断) → React Agent → TTS → 扬声器
+
+    Vision 路由逻辑：
+    - 视觉关键词（看、查看、分析等）→ Vision API → TTS
+    - 操作关键词（点击、输入、打开等）→ React Agent → TTS
     """
     print("\n" + "="*60)
     print("🚀 Pipecat 模式 - 初始化中...")
@@ -190,6 +195,7 @@ async def create_pipecat_pipeline():
 
     kws_proc = SherpaKWSProcessor(wake_system.kws_model)
     asr_proc = SherpaASRProcessor(wake_system.asr_model)
+    vision_proc = VisionProcessor(wake_system.agent.vision)  # 视觉理解（异步）
     agent_proc = ReactAgentProcessor(wake_system.agent)  # 基于官方推荐模式：直接异步调用
 
     # 创建音频传输（在创建 TTS Processor 之前）
@@ -202,6 +208,7 @@ async def create_pipecat_pipeline():
 
     print("✓ KWS Processor 已创建")
     print("✓ ASR Processor 已创建")
+    print("✓ Vision Processor 已创建")
     print("✓ React Agent Processor 已创建")
     print("✓ TTS Processor 已创建")
 
@@ -211,6 +218,7 @@ async def create_pipecat_pipeline():
     pipeline = Pipeline([
         kws_proc,
         asr_proc,
+        vision_proc,  # Vision 理解（判断路由）
         agent_proc,
         tts_proc,
     ])

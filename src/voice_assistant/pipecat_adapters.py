@@ -1,8 +1,13 @@
 """Pipecat 适配器 - 封装现有组件为 Pipecat Processors"""
 import asyncio
 import numpy as np
+import tempfile
+import ctypes
+from ctypes import wintypes
+from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
+from PIL import ImageGrab
 
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.frames.frames import (
@@ -357,3 +362,145 @@ class PiperTTSProcessor(FrameProcessor):
             except Exception as e:
                 print(f"❌ TTS 生成失败: {e}")
                 return False
+
+
+# ==================== Vision Processor ====================
+
+class VisionProcessor(FrameProcessor):
+    """
+    Vision 理解 Processor
+
+    判断用户指令是否需要视觉理解，如需要则：
+    1. 截图（异步）
+    2. 调用 Vision API（异步）
+    3. 输出分析结果
+    """
+
+    def __init__(self, vision_client):
+        super().__init__()
+        self.vision = vision_client  # VisionUnderstanding 实例
+        self.vision_keywords = [
+            "看", "查看", "讲解", "描述", "显示什么", "显示的",
+            "分析", "识别", "内容是", "画面", "截图", "图片"
+        ]
+        self.operation_keywords = [
+            "点击", "输入", "打开", "关闭", "启动", "切换",
+            "滚动", "搜索", "执行", "运行", "按"
+        ]
+
+    def _needs_vision(self, command: str) -> bool:
+        """判断是否需要 Vision"""
+        # 操作关键词优先（React 模式）
+        if any(kw in command for kw in self.operation_keywords):
+            return False
+        # 视觉关键词
+        return any(kw in command for kw in self.vision_keywords)
+
+    def _get_foreground_window_rect(self) -> Optional[tuple]:
+        """获取前台窗口坐标（DPI感知）"""
+        try:
+            # 设置 DPI 感知
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            except:
+                pass  # 可能已经设置过
+
+            # 获取前台窗口句柄
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            if not hwnd:
+                return None
+
+            # 获取窗口矩形
+            rect = wintypes.RECT()
+            ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+
+            # 修正：去除边框和阴影
+            padding = 8
+            bbox = (
+                rect.left + padding,
+                rect.top,
+                rect.right - padding,
+                rect.bottom - padding
+            )
+
+            return bbox
+
+        except Exception as e:
+            print(f"[Vision] 获取窗口坐标失败: {e}")
+            return None
+
+    def _take_screenshot_sync(self, target: str = "window") -> str:
+        """同步截图逻辑"""
+        # 创建临时文件
+        temp_file = tempfile.NamedTemporaryFile(
+            suffix='.png',
+            delete=False
+        )
+        temp_path = temp_file.name
+        temp_file.close()
+
+        if target == "window":
+            # 尝试窗口截图
+            bbox = self._get_foreground_window_rect()
+            if bbox:
+                screenshot = ImageGrab.grab(bbox=bbox)
+            else:
+                # 降级到全屏
+                print("[Vision] 窗口截图失败，使用全屏模式")
+                screenshot = ImageGrab.grab()
+        else:
+            # 全屏截图
+            screenshot = ImageGrab.grab()
+
+        screenshot.save(temp_path)
+        return temp_path
+
+    async def _take_screenshot_async(self) -> str:
+        """异步截图（使用线程池）"""
+        return await asyncio.to_thread(self._take_screenshot_sync)
+
+    async def process_frame(self, frame, direction):
+        """处理帧"""
+        await super().process_frame(frame, direction)
+
+        # 响应中断
+        if isinstance(frame, InterruptionFrame):
+            await self.push_frame(frame, direction)
+            return
+
+        # 处理文本命令
+        if isinstance(frame, TextFrame):
+            if self._needs_vision(frame.text):
+                print(f"🔍 Vision 模式: {frame.text}")
+
+                try:
+                    # 异步截图
+                    screenshot_path = await self._take_screenshot_async()
+
+                    # 异步 Vision API
+                    result = await self.vision.understand_screen_async(
+                        screenshot_path,
+                        question=frame.text
+                    )
+
+                    # 清理临时文件
+                    try:
+                        Path(screenshot_path).unlink()
+                    except:
+                        pass
+
+                    # 输出结果
+                    print(f"📊 Vision 结果: {result[:100]}...")
+                    await self.push_frame(TextFrame(result), direction)
+                    return
+
+                except Exception as e:
+                    print(f"❌ Vision 处理失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # 失败时仍传递原始帧给 Agent
+                    await self.push_frame(frame, direction)
+                    return
+
+        # 非 Vision 任务，传递给 ReactAgent
+        await self.push_frame(frame, direction)

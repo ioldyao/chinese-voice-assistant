@@ -12,7 +12,7 @@ import ctypes
 from ctypes import wintypes
 
 from .config import DASHSCOPE_API_KEY, DASHSCOPE_API_URL
-from .mcp_client import MCPManagerSync, MCPResponse
+from .mcp_client import MCPManager, MCPResponse
 from .tts import TTSManagerStreaming
 from .vision import VisionUnderstanding
 
