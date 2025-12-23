@@ -23,11 +23,12 @@ from .react_agent import ReactAgent
 class SmartWakeWordSystem:
     """智能语音唤醒系统 - 双阶段识别版"""
 
-    def __init__(self, models_dir=None, enable_voice=True):
+    def __init__(self, models_dir=None, enable_voice=True, enable_mcp=True):
         self.models_dir = Path(models_dir) if models_dir else MODELS_DIR
         self.running = False
         self.sample_rate = SAMPLE_RATE
         self.enable_voice = enable_voice
+        self.enable_mcp = enable_mcp
 
         # 执行线程锁（确保同一时间只有一个命令在执行）
         self.execution_lock = threading.Lock()
@@ -42,13 +43,17 @@ class SmartWakeWordSystem:
 
         # React Agent (集成 MCP)
         self.agent = ReactAgent()
-        print("正在启动 MCP Servers...")
-        if not self.agent.start():
-            raise RuntimeError("启动 MCP Server 失败")
+        if enable_mcp:
+            print("正在启动 MCP Servers...")
+            if not self.agent.start():
+                raise RuntimeError("启动 MCP Server 失败")
 
         print(f"✓ KWS模型已加载")
         print(f"✓ ASR模型已加载")
-        print(f"✓ MCP Servers 已启动")
+        if enable_mcp:
+            print(f"✓ MCP Servers 已启动")
+        else:
+            print(f"⏭️  MCP Servers 跳过（Pipecat 模式将稍后启动）")
         print(f"语音播报: {'开启' if enable_voice else '关闭'}")
 
     def create_kws_model(self):

@@ -198,26 +198,61 @@ class ReactAgentProcessor(FrameProcessor):
     React Agent 适配器
 
     将现有的 ReactAgent 封装为 Pipecat Processor
-    接收文本帧，调用 execute_command，输出响应文本
+    接收文本帧，调用 execute_command（异步模式），输出响应文本
+    支持后台执行，不阻塞 Pipeline
     """
 
-    def __init__(self, react_agent):
+    def __init__(self, react_agent, main_loop=None):
         super().__init__()
         self.agent = react_agent
+        self.main_loop = main_loop  # 保存主事件循环引用
+        self.current_task = None  # 当前运行的任务
+        self.cancel_flag = False  # 取消标志
 
     async def process_frame(self, frame, direction):
         """处理文本帧，执行 React Agent"""
         await super().process_frame(frame, direction)
 
+        # 检测唤醒词，取消当前任务
+        if isinstance(frame, WakeWordDetectedFrame):
+            if self.current_task and not self.current_task.done():
+                print("⏸️  检测到新唤醒词，取消当前 Agent 任务")
+                self.cancel_flag = True
+                self.current_task.cancel()
+            # 传递唤醒帧
+            await self.push_frame(frame, direction)
+            return
+
         if isinstance(frame, TextFrame):
             print(f"🤖 React Agent 处理: {frame.text}")
 
-            # 在线程池中调用同步的 execute_command
-            result = await asyncio.to_thread(
-                self.agent.execute_command,
-                frame.text,
-                enable_voice=False  # TTS 由 Pipecat 管理
+            # 重置取消标志
+            self.cancel_flag = False
+
+            # 创建后台任务（不等待完成）
+            self.current_task = asyncio.create_task(
+                self._execute_and_push_result(frame.text, direction)
             )
+
+            # 传递原始帧（不等待任务完成）
+            await self.push_frame(frame, direction)
+        else:
+            # 其他帧直接传递
+            await self.push_frame(frame, direction)
+
+    async def _execute_and_push_result(self, command: str, direction):
+        """在后台执行命令并推送结果"""
+        try:
+            # 使用异步执行（带超时）
+            result = await asyncio.wait_for(
+                self._execute_command_async(command),
+                timeout=60.0  # 60秒超时
+            )
+
+            # 检查是否被取消
+            if self.cancel_flag:
+                print("⏸️  Agent 任务已取消")
+                return
 
             if result.get("success"):
                 response = result.get("message", "")
@@ -235,11 +270,115 @@ class ReactAgentProcessor(FrameProcessor):
                     direction
                 )
 
-            # 传递原始帧
-            await self.push_frame(frame, direction)
-        else:
-            # 其他帧直接传递
-            await self.push_frame(frame, direction)
+        except asyncio.TimeoutError:
+            print("⏱️  Agent 任务超时（60秒）")
+            await self.push_frame(
+                TextFrame(text="抱歉，任务执行超时"),
+                direction
+            )
+        except asyncio.CancelledError:
+            print("⏸️  Agent 任务被取消")
+        except Exception as e:
+            print(f"❌ Agent 执行异常: {e}")
+            import traceback
+            traceback.print_exc()
+
+    async def _execute_command_async(self, command: str) -> dict:
+        """
+        异步执行命令（Pipecat 专用）
+
+        使用 run_coroutine_threadsafe 从新线程向主事件循环提交 MCP 调用
+        """
+        import threading
+        import queue
+        import concurrent.futures
+
+        result_queue = queue.Queue()
+
+        def run_in_thread():
+            """在独立线程中运行 execute_command，使用 run_coroutine_threadsafe 调用 MCP"""
+            import asyncio
+
+            print(f"[调试] 开始在线程中执行命令: {command}")
+
+            # 创建新的事件循环（不干扰主循环）
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            # 保存原始 MCP call_tool 方法
+            original_call_tool = self.agent.mcp.call_tool
+
+            # 创建包装器：使用 run_coroutine_threadsafe 调用主循环
+            def call_tool_wrapper(tool_name, args):
+                """在主循环中执行 MCP 调用"""
+                print(f"[调试] 通过 run_coroutine_threadsafe 调用工具: {tool_name}")
+
+                # 使用 run_coroutine_threadsafe 在主循环中执行
+                future = asyncio.run_coroutine_threadsafe(
+                    self.agent.mcp.call_tool_async(tool_name, args),
+                    self.main_loop
+                )
+
+                # 等待结果（带超时）
+                try:
+                    result = future.result(timeout=30.0)
+                    print(f"[调试] 工具调用成功: {tool_name}")
+                    return result
+                except concurrent.futures.TimeoutError:
+                    print(f"[调试] 工具调用超时: {tool_name}")
+                    from .mcp_client import MCPResponse
+                    return MCPResponse(success=False, error="工具调用超时")
+
+            # 临时替换 call_tool 方法
+            self.agent.mcp.call_tool = call_tool_wrapper
+
+            try:
+                # 执行命令
+                print("[调试] 开始调用 execute_command...")
+                result = self.agent.execute_command(command, enable_voice=False)
+                print(f"[调试] execute_command 完成，结果: success={result.get('success')}")
+                result_queue.put(("success", result))
+            except Exception as e:
+                print(f"[调试] execute_command 异常: {e}")
+                import traceback
+                traceback.print_exc()
+                result_queue.put(("error", str(e)))
+            finally:
+                # 恢复原始方法
+                self.agent.mcp.call_tool = original_call_tool
+                print("[调试] 清理事件循环...")
+                loop.close()
+
+        # 启动线程
+        print(f"[调试] 启动执行线程...")
+        thread = threading.Thread(target=run_in_thread, daemon=True)
+        thread.start()
+
+        # 等待结果（带超时，最多等待 50 秒）
+        print("[调试] 等待线程结果...")
+        try:
+            status, result = await asyncio.wait_for(
+                asyncio.to_thread(result_queue.get),
+                timeout=50.0
+            )
+            print(f"[调试] 收到结果: status={status}")
+        except asyncio.TimeoutError:
+            print("[调试] ⏱️  线程执行超时（50秒），强制返回错误")
+            return {"success": False, "message": "命令执行超时"}
+
+        # 等待线程结束（带超时）
+        print("[调试] 等待线程结束...")
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(thread.join),
+                timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            print("[调试] ⚠️  线程未能在 5 秒内结束")
+
+        if status == "error":
+            return {"success": False, "message": result}
+        return result
 
 
 # ==================== Piper TTS Processor ====================
@@ -249,29 +388,42 @@ class PiperTTSProcessor(FrameProcessor):
     Piper TTS 适配器
 
     将现有的 TTSManagerStreaming 封装为 Pipecat Processor
-    接收文本帧，生成音频帧
+    接收文本帧，生成音频帧并直接播放，支持中断
     """
 
-    def __init__(self, tts_manager):
+    def __init__(self, tts_manager, transport=None):
         super().__init__()
         self.tts = tts_manager
+        self.transport = transport  # 用于直接播放音频
+        self.interrupt_flag = False  # 中断标志
+
+    def interrupt(self):
+        """中断当前TTS播放"""
+        self.interrupt_flag = True
 
     async def process_frame(self, frame, direction):
         """处理文本帧，生成 TTS 音频"""
         await super().process_frame(frame, direction)
 
+        # 检测唤醒词，设置中断
+        if isinstance(frame, WakeWordDetectedFrame):
+            print("⏸️  检测到新唤醒词，中断TTS播放")
+            self.interrupt()
+            # 传递唤醒帧
+            await self.push_frame(frame, direction)
+            return
+
         if isinstance(frame, TextFrame):
             print(f"🔊 TTS 合成: {frame.text}")
 
-            # 在线程池中生成音频
-            audio_chunks = await asyncio.to_thread(
-                self._synthesize_sync,
+            # 重置中断标志
+            self.interrupt_flag = False
+
+            # 在线程池中生成和播放音频
+            await asyncio.to_thread(
+                self._synthesize_and_play_sync,
                 frame.text
             )
-
-            # 推送音频帧
-            for chunk in audio_chunks:
-                await self.push_frame(chunk, direction)
 
             # 传递原始文本帧
             await self.push_frame(frame, direction)
@@ -279,16 +431,19 @@ class PiperTTSProcessor(FrameProcessor):
             # 其他帧直接传递
             await self.push_frame(frame, direction)
 
-    def _synthesize_sync(self, text):
-        """同步 TTS 合成（在线程池中执行）"""
-        chunks = []
-
+    def _synthesize_and_play_sync(self, text):
+        """同步 TTS 合成并播放（在线程池中执行），支持中断"""
         if self.tts.engine_type == "piper":
             try:
                 # 使用 Piper TTS 生成音频
                 audio_generator = self.tts.piper_voice.synthesize(text)
 
                 for chunk in audio_generator:
+                    # 检查中断标志
+                    if self.interrupt_flag:
+                        print("⏸️  TTS 播放已中断")
+                        break
+
                     # 提取音频数据
                     audio_float = chunk.audio_float_array
                     sample_rate = chunk.sample_rate
@@ -296,15 +451,9 @@ class PiperTTSProcessor(FrameProcessor):
                     # 转换为 int16
                     audio_int16 = (audio_float * 32767).astype(np.int16)
 
-                    # 创建 TTS 音频帧
-                    audio_frame = TTSAudioRawFrame(
-                        audio=audio_int16.tobytes(),
-                        sample_rate=sample_rate,
-                        num_channels=1
-                    )
-                    chunks.append(audio_frame)
+                    # 直接播放到 transport
+                    if self.transport and self.transport.output_stream:
+                        self.transport.output_stream.write(audio_int16.tobytes())
 
             except Exception as e:
                 print(f"❌ TTS 生成失败: {e}")
-
-        return chunks

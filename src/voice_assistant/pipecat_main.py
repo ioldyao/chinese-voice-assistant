@@ -35,6 +35,8 @@ class SimplePyAudioTransport:
         import pyaudio
         import numpy as np
 
+        self.pyaudio = pyaudio  # 保存模块引用
+        self.np = np
         self.sample_rate = sample_rate
         self.channels = channels
         self.chunk_size = 512
@@ -53,7 +55,7 @@ class SimplePyAudioTransport:
 
         # 启动输入流
         self.input_stream = self.p.open(
-            format=pyaudio.paInt16,
+            format=self.pyaudio.paInt16,
             channels=self.channels,
             rate=self.sample_rate,
             input=True,
@@ -63,7 +65,7 @@ class SimplePyAudioTransport:
 
         # 启动输出流
         self.output_stream = self.p.open(
-            format=pyaudio.paInt16,
+            format=self.pyaudio.paInt16,
             channels=self.channels,
             rate=self.sample_rate,
             output=True,
@@ -141,28 +143,72 @@ async def create_pipecat_pipeline():
     # 1. 初始化现有组件
     print("\n⏳ 正在加载模型...")
 
-    # 创建 wake_word 系统（仅获取模型，不启动循环）
-    wake_system = SmartWakeWordSystem(enable_voice=False)
+    # 创建 wake_word 系统（跳过 MCP 初始化，避免事件循环冲突）
+    wake_system = SmartWakeWordSystem(enable_voice=False, enable_mcp=False)
+
+    # 手动异步启动 MCP Servers
+    print("\n⏳ 正在启动 MCP Servers（异步模式）...")
+    servers = [
+        # Playwright-MCP: 浏览器操作（主要使用）
+        ("playwright", "npx", ["@playwright/mcp@latest"], 120)
+    ]
+
+    success_count = 0
+    for name, command, args, timeout in servers:
+        try:
+            success = await wake_system.agent.mcp.manager.add_server_async(
+                name, command, args, timeout
+            )
+            if success:
+                success_count += 1
+                print(f"  ✓ {name} MCP Server 启动成功")
+        except Exception as e:
+            print(f"  ❌ {name} Server 启动异常: {e}")
+            continue
+
+    if success_count > 0:
+        print(f"\n✅ 成功启动 {success_count}/{len(servers)} 个 MCP Server\n")
+        wake_system.agent.mcp._started = True
+
+        # 设置事件循环（用于同步方法回退）
+        wake_system.agent.mcp.loop = asyncio.get_event_loop()
+
+        # 获取工具列表（使用异步方法）
+        wake_system.agent.available_tools = await wake_system.agent.mcp.manager.list_all_tools_async()
+        playwright_tools = [
+            tool for tool in wake_system.agent.available_tools
+            if tool.get("server") == "playwright"
+        ]
+        if playwright_tools:
+            print(f"  ✓ Playwright-MCP: {len(playwright_tools)} 个工具")
+    else:
+        print(f"\n❌ 所有 MCP Server 启动失败\n")
+        raise RuntimeError("MCP Server 启动失败")
 
     # 2. 创建 Pipecat Processors
     print("\n⏳ 正在创建 Pipecat Processors...")
 
+    # 获取主事件循环引用（用于 ReactAgentProcessor）
+    main_loop = asyncio.get_event_loop()
+
     kws_proc = SherpaKWSProcessor(wake_system.kws_model)
     asr_proc = SherpaASRProcessor(wake_system.asr_model)
-    agent_proc = ReactAgentProcessor(wake_system.agent)
-    tts_proc = PiperTTSProcessor(wake_system.agent.tts)
+    agent_proc = ReactAgentProcessor(wake_system.agent, main_loop)
+
+    # 创建音频传输（在创建 TTS Processor 之前）
+    print("\n⏳ 正在创建音频传输...")
+    transport = SimplePyAudioTransport(sample_rate=16000)
+    await transport.start()
+
+    # 创建 TTS Processor（传入 transport 用于音频输出）
+    tts_proc = PiperTTSProcessor(wake_system.agent.tts, transport)
 
     print("✓ KWS Processor 已创建")
     print("✓ ASR Processor 已创建")
     print("✓ React Agent Processor 已创建")
     print("✓ TTS Processor 已创建")
 
-    # 3. 创建音频传输
-    print("\n⏳ 正在创建音频传输...")
-    transport = SimplePyAudioTransport(sample_rate=16000)
-    await transport.start()
-
-    # 4. 构建 Pipeline（线性结构）
+    # 3. 构建 Pipeline（线性结构）
     print("\n⏳ 正在构建 Pipeline...")
 
     pipeline = Pipeline([
@@ -186,32 +232,41 @@ async def create_pipecat_pipeline():
 async def run_pipeline_with_audio(pipeline, transport):
     """
     运行 Pipeline 并处理音频 I/O
+
+    Phase 1 简化实现：
+    - 使用 PipelineTask 和 PipelineRunner 正确运行 Pipeline
+    - 音频输入通过 queue_frames() 推送到 Pipeline
     """
+    from pipecat.frames.frames import StartFrame, EndFrame
+
     try:
-        # 创建两个任务：
-        # 1. 音频输入 → Pipeline
-        # 2. Pipeline → 音频输出
+        # 创建 PipelineTask
+        task = PipelineTask(pipeline)
 
-        async def audio_input_task():
-            """音频输入任务"""
+        # 发送 StartFrame 初始化
+        await task.queue_frames([StartFrame()])
+
+        # 创建音频输入任务
+        async def audio_input_loop():
+            """持续读取音频并推送到 Pipeline"""
             async for audio_frame in transport.read_audio_frames():
-                # 推送音频帧到 Pipeline
-                await pipeline.process_frame(audio_frame, pipeline.FrameDirection.DOWNSTREAM)
+                await task.queue_frames([audio_frame])
 
-        async def audio_output_task():
-            """音频输出任务"""
-            # 获取 Pipeline 的输出帧
-            async for frame in pipeline.get_output_frames():
-                # 写入音频帧到扬声器
-                await transport.write_audio_frame(frame)
+        # 创建 PipelineRunner 并运行
+        runner = PipelineRunner()
 
-        # 并行运行两个任务
+        # 并行运行 Pipeline 和音频输入
         await asyncio.gather(
-            audio_input_task(),
-            audio_output_task()
+            runner.run(task),
+            audio_input_loop()
         )
 
     except asyncio.CancelledError:
+        # 发送 EndFrame 结束
+        try:
+            await task.queue_frames([EndFrame()])
+        except:
+            pass
         print("\n⏹️  Pipeline 已停止")
     except Exception as e:
         print(f"\n❌ Pipeline 运行错误: {e}")
