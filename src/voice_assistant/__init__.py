@@ -11,6 +11,9 @@ from .vision import VisionUnderstanding
 from .mcp_client import MCPClient, MCPClientSync, MCPManager, MCPManagerSync, MCPResponse
 from .react_agent import ReactAgent, ReActParser, ReActStep
 
+# pipecat_main 使用延迟导入，避免初始化时的阻塞
+# 使用时通过 from src.voice_assistant import pipecat_main 导入
+
 __version__ = "2.0.0"
 __all__ = [
     "SmartWakeWordSystem",
