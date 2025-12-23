@@ -1,4 +1,4 @@
-"""React Agent - 使用 MCP 工具的智能代理（同步版本）"""
+"""React Agent - 使用 MCP 工具的智能代理（异步版本）"""
 import json
 import logging
 import re
@@ -6,10 +6,6 @@ import requests
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from pathlib import Path
-from PIL import ImageGrab
-import tempfile
-import ctypes
-from ctypes import wintypes
 
 from .config import DASHSCOPE_API_KEY, DASHSCOPE_API_URL
 from .mcp_client import MCPManager, MCPResponse
@@ -130,11 +126,13 @@ class ReactAgent:
     """
     React (Reasoning and Acting) Agent
 
-    基于 ReAct 框架的智能代理（同步版本）：
+    基于 ReAct 框架的智能代理（异步版本）：
     1. Thought: 分析当前状态，思考下一步
     2. Action: 选择并执行 MCP 工具
     3. Observation: 观察执行结果
     4. 循环直到任务完成
+
+    仅支持异步执行（用于 Pipecat 模式）
     """
 
     def __init__(self, api_url=None, api_key=None):
@@ -142,8 +140,8 @@ class ReactAgent:
         self.api_key = api_key or DASHSCOPE_API_KEY
         self.logger = logging.getLogger(__name__)
 
-        # MCP Manager（管理多个 MCP Server）
-        self.mcp = MCPManagerSync()
+        # MCP Manager（管理多个 MCP Server）- 异步版本
+        self.mcp = MCPManager()
 
         # TTS（流式 - Piper 本地，超快）
         self.tts = TTSManagerStreaming(engine_type="piper")
@@ -171,82 +169,6 @@ class ReactAgent:
 
         # 执行状态标志（标识是否正在执行任务）
         self.is_executing = False
-
-    def start(self) -> bool:
-        """启动 Agent（启动 MCP Servers）"""
-        print("\n⏳ 正在启动 MCP Servers...")
-
-        # 配置 MCP Servers
-        servers = [
-            # Windows-MCP: 系统级操作（暂时禁用）
-            # ("windows", "uvx", ["windows-mcp"], 60),
-
-            # Playwright-MCP: 浏览器操作（主要使用）
-            ("playwright", "npx", ["@playwright/mcp@latest"], 120)
-        ]
-
-        success = self.mcp.start(servers)
-        if success:
-            # 获取所有工具列表
-            self.available_tools = self.mcp.list_all_tools()
-
-            # 统计工具数量
-            windows_tools = self.mcp.get_tools_by_server("windows")
-            playwright_tools = self.mcp.get_tools_by_server("playwright")
-
-            if windows_tools:
-                print(f"  ✓ Windows-MCP: {len(windows_tools)} 个工具")
-                self.logger.info(f"✓ Windows-MCP: {len(windows_tools)} 个工具")
-
-            if playwright_tools:
-                print(f"  ✓ Playwright-MCP: {len(playwright_tools)} 个工具")
-                self.logger.info(f"✓ Playwright-MCP: {len(playwright_tools)} 个工具")
-            else:
-                print(f"  ⚠️ Playwright-MCP 未启动（浏览器操作将使用 Windows 工具）")
-                self.logger.warning("Playwright-MCP 未启动")
-
-            print(f"  📊 总计: {len(self.available_tools)} 个工具")
-            self.logger.info(f"✓ 总计 {len(self.available_tools)} 个工具")
-
-        return success
-
-    def stop(self):
-        """停止 Agent"""
-        self.mcp.stop()
-
-    def execute_command(self, user_command: str, enable_voice: bool = True) -> Dict:
-        """
-        执行用户命令（智能判断使用 Vision 或 React 循环）- 同步版本（用于传统模式）
-
-        Args:
-            user_command: 用户指令
-            enable_voice: 是否语音播报
-
-        Returns:
-            执行结果
-        """
-        self.logger.info(f"🤖 开始执行: {user_command}")
-
-        # 标记为执行中
-        self.is_executing = True
-        self.interrupt_flag = False  # 重置中断标志
-
-        try:
-            if enable_voice:
-                self.tts.speak_async("好的，让我来处理")
-
-            # 判断是否需要视觉理解
-            if self._needs_vision_understanding(user_command):
-                self.logger.info("使用 Vision 模式（视觉理解）")
-                print("💡 检测到视觉理解任务，使用 Vision API...")
-                return self._vision_mode(user_command, enable_voice)
-            else:
-                self.logger.info("使用 React 模式（操作执行）")
-                return self._react_mode(user_command, enable_voice)
-        finally:
-            # 执行完成，清除执行标志
-            self.is_executing = False
-            self.interrupt_flag = False
 
     async def execute_command_async(self, user_command: str, enable_voice: bool = False) -> Dict:
         """
@@ -276,215 +198,6 @@ class ReactAgent:
             # 执行完成，清除执行标志
             self.is_executing = False
             self.interrupt_flag = False
-
-    def _needs_vision_understanding(self, command: str) -> bool:
-        """
-        判断是否需要视觉理解
-
-        视觉理解关键词：看、查看、讲解、描述、显示、分析、识别
-        操作关键词：点击、输入、打开、关闭、滚动、搜索
-        """
-        vision_keywords = [
-            "看", "查看", "讲解", "描述", "显示什么", "显示的",
-            "分析", "识别", "内容是", "画面", "截图", "图片"
-        ]
-
-        operation_keywords = [
-            "点击", "输入", "打开", "关闭", "启动", "切换",
-            "滚动", "搜索", "执行", "运行", "按"
-        ]
-
-        # 如果包含操作关键词，优先使用 React 模式
-        if any(kw in command for kw in operation_keywords):
-            return False
-
-        # 如果包含视觉关键词，使用 Vision 模式
-        if any(kw in command for kw in vision_keywords):
-            return True
-
-        # 默认使用 React 模式
-        return False
-
-    def _vision_mode(self, user_command: str, enable_voice: bool) -> Dict:
-        """
-        视觉理解模式
-
-        Args:
-            user_command: 用户指令
-            enable_voice: 是否语音播报
-
-        Returns:
-            执行结果
-        """
-        try:
-            # 智能判断截图范围
-            target = self._determine_screenshot_target(user_command)
-
-            # 1. 截图
-            print(f"📸 正在截图 ({target})...")
-            screenshot_path = self._take_screenshot(target)
-
-            # 检查中断（截图后）
-            if self.interrupt_flag:
-                print("⚠️ 检测到中断请求，取消分析")
-                try:
-                    Path(screenshot_path).unlink()
-                except:
-                    pass
-                return {
-                    "success": False,
-                    "message": "用户中断",
-                    "mode": "vision",
-                    "interrupted": True
-                }
-
-            # 2. 调用 Vision API
-            print("🔍 正在分析图像...")
-            analysis = self.vision.understand_screen(
-                screenshot_path,
-                question=user_command
-            )
-
-            # 检查中断（API返回后）
-            if self.interrupt_flag:
-                print("⚠️ 检测到中断请求，停止输出")
-                try:
-                    Path(screenshot_path).unlink()
-                except:
-                    pass
-                return {
-                    "success": False,
-                    "message": "用户中断",
-                    "mode": "vision",
-                    "interrupted": True
-                }
-
-            # 输出分析结果
-            if analysis:
-                print(f"\n📊 分析结果:\n{analysis}\n")
-            else:
-                print("⚠️ 未获取到分析结果")
-
-            # 3. 语音播报
-            if enable_voice and analysis:
-                self.tts.speak_async(analysis)
-
-            # 4. 清理临时文件
-            try:
-                Path(screenshot_path).unlink()
-            except:
-                pass
-
-            return {
-                "success": True,
-                "message": analysis,
-                "mode": "vision"
-            }
-
-        except Exception as e:
-            error_msg = f"视觉理解失败: {e}"
-            self.logger.error(error_msg)
-            if enable_voice:
-                self.tts.speak_async("抱歉，视觉理解失败")
-            return {
-                "success": False,
-                "message": error_msg,
-                "mode": "vision"
-            }
-
-    def _determine_screenshot_target(self, command: str) -> str:
-        """
-        根据指令判断截图范围
-
-        Returns:
-            "window" - 当前窗口
-            "screen" - 全屏
-        """
-        # 明确指定窗口的关键词
-        window_keywords = ["窗口", "浏览器", "chrome", "应用"]
-
-        # 如果包含窗口相关关键词，优先截取窗口
-        if any(kw in command.lower() for kw in window_keywords):
-            return "window"
-
-        # 默认窗口截图（节省 Vision API token）
-        return "window"
-
-    def _get_foreground_window_rect(self) -> Optional[tuple]:
-        """
-        获取前台窗口坐标（DPI感知）
-
-        Returns:
-            (left, top, right, bottom) 或 None
-        """
-        try:
-            # 设置 DPI 感知
-            try:
-                ctypes.windll.shcore.SetProcessDpiAwareness(2)
-            except:
-                # 可能已经设置过，忽略错误
-                pass
-
-            # 获取前台窗口句柄
-            hwnd = ctypes.windll.user32.GetForegroundWindow()
-            if not hwnd:
-                return None
-
-            # 获取窗口矩形
-            rect = wintypes.RECT()
-            ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-
-            # 修正：去除边框和阴影（Windows 10/11 典型值）
-            padding = 8
-            bbox = (
-                rect.left + padding,
-                rect.top,
-                rect.right - padding,
-                rect.bottom - padding
-            )
-
-            self.logger.debug(f"窗口坐标: 原始{(rect.left, rect.top, rect.right, rect.bottom)} -> 修正{bbox}")
-            return bbox
-
-        except Exception as e:
-            self.logger.warning(f"获取窗口坐标失败: {e}")
-            return None
-
-    def _take_screenshot(self, target: str = "window") -> str:
-        """
-        智能截图
-
-        Args:
-            target: "window" (当前窗口，默认) 或 "screen" (全屏)
-
-        Returns:
-            截图文件路径
-        """
-        # 创建临时文件
-        temp_file = tempfile.NamedTemporaryFile(
-            suffix='.png',
-            delete=False
-        )
-        temp_path = temp_file.name
-        temp_file.close()
-
-        if target == "window":
-            # 尝试窗口截图
-            bbox = self._get_foreground_window_rect()
-            if bbox:
-                self.logger.info(f"使用窗口截图: {bbox}")
-                screenshot = ImageGrab.grab(bbox=bbox)
-            else:
-                # 降级到全屏
-                self.logger.warning("窗口坐标获取失败，降级到全屏截图")
-                print("⚠️ 窗口截图失败，使用全屏模式")
-                screenshot = ImageGrab.grab()
-        else:
-            # 全屏截图
-            screenshot = ImageGrab.grab()
-
-        screenshot.save(temp_path)
-        return temp_path
 
     async def _react_mode_async(self, user_command: str, enable_voice: bool = False) -> Dict:
         """
@@ -579,118 +292,6 @@ class ReactAgent:
 
         # 超过最大步数
         self.logger.warning("⚠️ 超过最大步数，任务未完成")
-        return {
-            "success": False,
-            "message": "超过最大步数",
-            "steps": self.max_steps
-        }
-
-    def _react_mode(self, user_command: str, enable_voice: bool) -> Dict:
-        """
-        React 操作模式（使用 MCP 工具）- 同步版本（用于传统模式）
-
-        Args:
-            user_command: 用户指令
-            enable_voice: 是否语音播报
-
-        Returns:
-            执行结果
-        """
-        # 重置历史
-        self.history = []
-
-        # React 循环
-        for step in range(self.max_steps):
-            # 检查中断标志
-            if self.interrupt_flag:
-                print("\n⚠️ 检测到中断请求，停止执行")
-                self.logger.warning("用户中断执行")
-                if enable_voice:
-                    self.tts.speak_async("已停止")
-                return {
-                    "success": False,
-                    "message": "用户中断",
-                    "steps": step,
-                    "interrupted": True
-                }
-
-            print(f"\n--- 步骤 {step + 1} ---")
-            self.logger.info(f"\n--- Step {step + 1} ---")
-
-            # 1. LLM 思考：下一步做什么
-            parsed_action = self._think(user_command)
-
-            if not parsed_action:
-                print("❌ 思考失败")
-                self.logger.error("❌ 思考失败")
-                break
-
-            # 2. 判断是否完成
-            if parsed_action.get("done", False):
-                print("✅ 任务完成")
-                self.logger.info("✅ 任务完成")
-
-                # 更新长期记忆（让 LLM 自动总结当前状态）
-                self._update_memory_async()
-
-                if enable_voice:
-                    final_answer = parsed_action.get("final_answer", "已完成")
-                    self.tts.speak_async(final_answer)
-                return {
-                    "success": True,
-                    "message": parsed_action.get("final_answer", "任务完成"),
-                    "steps": step + 1
-                }
-
-            # 3. 执行动作
-            print(f"🎯 执行: {parsed_action['action']}")
-            print(f"   参数: {parsed_action['action_input']}")
-            observation = self._execute_action(
-                parsed_action["action"],
-                parsed_action["action_input"]
-            )
-
-            # 执行后再次检查中断
-            if self.interrupt_flag:
-                print("\n⚠️ 检测到中断请求，停止执行")
-                self.logger.warning("用户中断执行")
-                if enable_voice:
-                    self.tts.speak_async("已停止")
-                return {
-                    "success": False,
-                    "message": "用户中断",
-                    "steps": step + 1,
-                    "interrupted": True
-                }
-
-            # 4. 显示结果
-            if observation and observation.success:
-                print(f"✓ 成功: {observation.content[:100] if observation.content else '执行成功'}")
-            else:
-                error_msg = observation.error if observation else '未知错误'
-                print(f"✗ 失败: {error_msg}")
-
-            # 5. 记录历史（带时间戳）
-            import time
-            self.history.append(ReActStep(
-                thought=parsed_action["thought"],
-                action=parsed_action["action"],
-                action_input=parsed_action["action_input"],
-                observation=observation.content if observation else "执行失败",
-                success=observation.success if observation else False,
-                timestamp=time.time()
-            ))
-
-            # 6. 如果失败，继续尝试调整策略
-            if not (observation and observation.success):
-                self.logger.warning(f"⚠️ 步骤失败: {observation.error if observation else '未知错误'}")
-                # 继续尝试下一个策略
-
-        # 超过最大步数
-        self.logger.warning("⚠️ 超过最大步数，任务未完成")
-        if enable_voice:
-            self.tts.speak_async("抱歉，任务未能完成")
-
         return {
             "success": False,
             "message": "超过最大步数",
@@ -906,38 +507,6 @@ Final Answer: [总结结果]
 2. "输入XXX" 指的是在输入框/搜索框中输入文字，不是访问网站"""
 
         return prompt
-
-    def _execute_action(self, action: str, action_input: Dict[str, Any]) -> Optional[MCPResponse]:
-        """
-        执行动作（同步版本，用于传统模式）
-
-        Args:
-            action: 工具名称
-            action_input: 工具参数
-
-        Returns:
-            MCPResponse 对象
-        """
-        if not action:
-            return MCPResponse(success=False, error="未指定工具")
-
-        try:
-            # 确保参数不为空
-            if not action_input:
-                print(f"[警告] 参数为空，使用空字典")
-                action_input = {}
-
-            print(f"[调试] 实际传递参数: {action_input}")
-            self.logger.debug(f"执行工具: {action}, 参数: {action_input}")
-
-            result = self.mcp.call_tool(action, action_input)
-            return result
-
-        except Exception as e:
-            self.logger.error(f"执行动作失败: {e}")
-            import traceback
-            traceback.print_exc()
-            return MCPResponse(success=False, error=str(e))
 
     async def _execute_action_async(self, action: str, action_input: Dict[str, Any]) -> Optional[MCPResponse]:
         """
