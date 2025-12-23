@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineTask
+from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat.transports.base_transport import TransportParams
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 
@@ -230,15 +230,22 @@ async def run_pipeline_with_audio(pipeline, transport):
     """
     运行 Pipeline 并处理音频 I/O
 
-    Phase 1 简化实现：
-    - 使用 PipelineTask 和 PipelineRunner 正确运行 Pipeline
+    配置官方中断支持：
+    - 使用 PipelineParams 启用 allow_interruptions
     - 音频输入通过 queue_frames() 推送到 Pipeline
     """
     from pipecat.frames.frames import StartFrame, EndFrame
 
     try:
-        # 创建 PipelineTask
-        task = PipelineTask(pipeline)
+        # ✅ 创建 PipelineTask，配置官方中断支持
+        task = PipelineTask(
+            pipeline,
+            params=PipelineParams(
+                allow_interruptions=True,  # 启用官方中断机制
+                audio_in_sample_rate=16000,
+                audio_out_sample_rate=16000,
+            )
+        )
 
         # 发送 StartFrame 初始化
         await task.queue_frames([StartFrame()])

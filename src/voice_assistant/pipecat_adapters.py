@@ -10,28 +10,10 @@ from pipecat.frames.frames import (
     AudioRawFrame,
     TextFrame,
     TTSAudioRawFrame,
-    StartInterruptionFrame,
+    InterruptionFrame,  # ✅ 官方中断帧
+    TTSStoppedFrame,    # ✅ 官方 TTS 停止帧
     EndFrame,
 )
-
-
-# ==================== 自定义 Frame 类型 ====================
-
-@dataclass
-class WakeWordDetectedFrame(Frame):
-    """唤醒词检测帧"""
-    keyword: str
-    confidence: float = 1.0
-
-
-@dataclass
-class ReActStepFrame(Frame):
-    """React 推理步骤帧"""
-    thought: str
-    action: str
-    action_input: dict
-    observation: str
-    success: bool
 
 
 # ==================== Sherpa-ONNX KWS Processor ====================
@@ -41,7 +23,7 @@ class SherpaKWSProcessor(FrameProcessor):
     Sherpa-ONNX KWS 适配器
 
     将现有的 Sherpa-ONNX KWS 模型封装为 Pipecat Processor
-    处理音频帧，检测唤醒词，输出 WakeWordDetectedFrame
+    处理音频帧，检测唤醒词，输出官方 InterruptionFrame
     """
 
     def __init__(self, kws_model):
@@ -50,6 +32,7 @@ class SherpaKWSProcessor(FrameProcessor):
         self.kws_stream = kws_model.create_stream()
         self.sample_rate = 16000
         self.is_awake = False  # 用于并行 Pipeline 的条件判断
+        self.last_keyword = None  # 保存最后检测到的唤醒词
 
     async def process_frame(self, frame, direction):
         """处理音频帧，检测唤醒词"""
@@ -71,10 +54,11 @@ class SherpaKWSProcessor(FrameProcessor):
             if result:
                 print(f"🔔 检测到唤醒词: {result}")
                 self.is_awake = True
+                self.last_keyword = result
 
-                # 发出唤醒事件
+                # ✅ 发出官方中断帧（Pipecat 标准）
                 await self.push_frame(
-                    WakeWordDetectedFrame(keyword=result),
+                    InterruptionFrame(),
                     direction
                 )
 
@@ -120,8 +104,8 @@ class SherpaASRProcessor(FrameProcessor):
         """处理音频帧，识别语音"""
         await super().process_frame(frame, direction)
 
-        # 检测唤醒词，开始录音
-        if isinstance(frame, WakeWordDetectedFrame):
+        # ✅ 检测官方中断帧，开始录音
+        if isinstance(frame, InterruptionFrame):
             print("📝 开始录音识别...")
             self.recording = True
             self.buffer = []
@@ -129,7 +113,7 @@ class SherpaASRProcessor(FrameProcessor):
             self.has_speech = False
             self.frame_count = 0
 
-            # 传递唤醒帧
+            # 传递中断帧
             await self.push_frame(frame, direction)
             return
 
@@ -201,6 +185,7 @@ class ReactAgentProcessor(FrameProcessor):
     - 直接调用 agent.execute_command_async()
     - 在主事件循环中执行 MCP 调用
     - 后台任务执行，不阻塞 Pipeline
+    - 响应官方 InterruptionFrame 中断信号
     """
 
     def __init__(self, react_agent):
@@ -219,10 +204,10 @@ class ReactAgentProcessor(FrameProcessor):
         """处理帧"""
         await super().process_frame(frame, direction)
 
-        # 检查唤醒词，取消当前任务
-        if isinstance(frame, WakeWordDetectedFrame):
+        # ✅ 响应官方中断帧，取消当前任务
+        if isinstance(frame, InterruptionFrame):
             if self.current_task and not self.current_task.done():
-                print("⏸️  检测到新唤醒词，取消当前 Agent 任务")
+                print("⏸️  检测到中断信号，取消当前 Agent 任务")
                 self.cancel_flag = True
                 self.current_task.cancel()
             await self.push_frame(frame, direction)
@@ -285,7 +270,8 @@ class PiperTTSProcessor(FrameProcessor):
     Piper TTS 适配器
 
     将现有的 TTSManagerStreaming 封装为 Pipecat Processor
-    接收文本帧，生成音频帧并直接播放，支持中断
+    接收文本帧，生成音频帧并直接播放
+    响应官方 InterruptionFrame，发出 TTSStoppedFrame
     """
 
     def __init__(self, tts_manager, transport=None):
@@ -293,6 +279,7 @@ class PiperTTSProcessor(FrameProcessor):
         self.tts = tts_manager
         self.transport = transport  # 用于直接播放音频
         self.interrupt_flag = False  # 中断标志
+        self.is_speaking = False  # TTS 播放状态
 
     def interrupt(self):
         """中断当前TTS播放"""
@@ -302,25 +289,33 @@ class PiperTTSProcessor(FrameProcessor):
         """处理文本帧，生成 TTS 音频"""
         await super().process_frame(frame, direction)
 
-        # 检测唤醒词，设置中断
-        if isinstance(frame, WakeWordDetectedFrame):
-            print("⏸️  检测到新唤醒词，中断TTS播放")
-            self.interrupt()
-            # 传递唤醒帧
+        # ✅ 响应官方中断帧，设置中断
+        if isinstance(frame, InterruptionFrame):
+            if self.is_speaking:
+                print("⏸️  检测到中断信号，停止TTS播放")
+                self.interrupt()
+            # 传递中断帧
             await self.push_frame(frame, direction)
             return
 
         if isinstance(frame, TextFrame):
             print(f"🔊 TTS 合成: {frame.text}")
 
-            # 重置中断标志
+            # 重置中断标志，标记为播放中
             self.interrupt_flag = False
+            self.is_speaking = True
 
             # 在线程池中生成和播放音频
-            await asyncio.to_thread(
+            was_interrupted = await asyncio.to_thread(
                 self._synthesize_and_play_sync,
                 frame.text
             )
+
+            # ✅ TTS 播放结束，发出官方停止帧
+            self.is_speaking = False
+            if was_interrupted:
+                print("⏸️  TTS 已被中断")
+                await self.push_frame(TTSStoppedFrame(), direction)
 
             # 传递原始文本帧
             await self.push_frame(frame, direction)
@@ -328,8 +323,13 @@ class PiperTTSProcessor(FrameProcessor):
             # 其他帧直接传递
             await self.push_frame(frame, direction)
 
-    def _synthesize_and_play_sync(self, text):
-        """同步 TTS 合成并播放（在线程池中执行），支持中断"""
+    def _synthesize_and_play_sync(self, text) -> bool:
+        """
+        同步 TTS 合成并播放（在线程池中执行），支持中断
+
+        Returns:
+            bool: 是否被中断
+        """
         if self.tts.engine_type == "piper":
             try:
                 # 使用 Piper TTS 生成音频
@@ -339,7 +339,7 @@ class PiperTTSProcessor(FrameProcessor):
                     # 检查中断标志
                     if self.interrupt_flag:
                         print("⏸️  TTS 播放已中断")
-                        break
+                        return True  # 返回中断标志
 
                     # 提取音频数据
                     audio_float = chunk.audio_float_array
@@ -352,5 +352,8 @@ class PiperTTSProcessor(FrameProcessor):
                     if self.transport and self.transport.output_stream:
                         self.transport.output_stream.write(audio_int16.tobytes())
 
+                return False  # 正常完成，未中断
+
             except Exception as e:
                 print(f"❌ TTS 生成失败: {e}")
+                return False

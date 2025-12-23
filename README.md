@@ -59,7 +59,10 @@
 - 🔄 **Pipeline 流式处理** - KWS → ASR → Agent → TTS 流水线
 - 🚀 **零线程开销** - 纯异步，无 `run_coroutine_threadsafe`
 - 🛡️ **非阻塞执行** - Agent 后台运行，不阻塞音频处理
-- ⏸️ **智能中断** - TTS 播放可被新唤醒词打断
+- ⏸️ **标准中断机制** - 使用 Pipecat 官方 `InterruptionFrame`
+  - ✅ 生态兼容：可与官方 TTS/LLM Processor 配合
+  - ✅ 统一协调：`allow_interruptions` 全局管理
+  - ✅ 事件明确：`TTSStoppedFrame` 通知停止状态
 
 ---
 
@@ -429,27 +432,33 @@ A:
    - KWS → ASR → Agent → TTS 流水线
    - 非阻塞执行，TTS 可中断
 
-2. **MCP 官方推荐模式重构**
+2. **Pipecat 官方中断机制** - 符合 Pipecat 最佳实践
+   - 使用标准 `InterruptionFrame` 替代自定义帧
+   - 配置 `allow_interruptions=True` 全局管理
+   - 发出 `TTSStoppedFrame` 明确停止事件
+   - 生态兼容：可与官方 TTS/LLM Processor 配合
+
+3. **MCP 官方推荐模式重构**
    - 基于 MCP Python SDK v1.25.0 官方最佳实践
    - 移除所有线程和 `run_coroutine_threadsafe`
    - 纯异步调用 `await session.call_tool()`
    - ReactAgentProcessor 代码减少 55%
 
-3. **双模式架构**
+4. **双模式架构**
    - 传统模式：稳定可靠，完整功能
    - Pipecat 模式：实验性，完全异步
 
-4. **Piper TTS 集成** - 本地超低延迟语音合成
+5. **Piper TTS 集成** - 本地超低延迟语音合成
    - 延迟降低至 100-200ms
    - 完全离线运行
    - 中文音色自然
 
-5. **Playwright MCP 集成** - 浏览器自动化控制
+6. **Playwright MCP 集成** - 浏览器自动化控制
    - 网页导航、元素交互、截图
    - 支持 Chrome/Firefox/Safari
    - 跨平台支持
 
-6. **React Agent 框架** - 智能推理决策
+7. **React Agent 框架** - 智能推理决策
    - 多轮思考+行动循环
    - 支持同步和异步执行
    - 自动错误纠正
@@ -468,8 +477,10 @@ A:
 
 #### 🔧 技术改进
 - 符合 MCP Python SDK 官方推荐模式
+- 符合 Pipecat 官方中断机制（InterruptionFrame + TTSStoppedFrame）
 - 代码简化 55%（185行 → 82行）
-- 完全异步架构
+- 完全异步架构，无自定义帧类型
+- 生态兼容，可与官方 Processor 配合
 - 易于维护和扩展
 
 ---
