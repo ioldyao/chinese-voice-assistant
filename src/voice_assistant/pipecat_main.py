@@ -188,12 +188,9 @@ async def create_pipecat_pipeline():
     # 2. 创建 Pipecat Processors
     print("\n⏳ 正在创建 Pipecat Processors...")
 
-    # 获取主事件循环引用（用于 ReactAgentProcessor）
-    main_loop = asyncio.get_event_loop()
-
     kws_proc = SherpaKWSProcessor(wake_system.kws_model)
     asr_proc = SherpaASRProcessor(wake_system.asr_model)
-    agent_proc = ReactAgentProcessor(wake_system.agent, main_loop)
+    agent_proc = ReactAgentProcessor(wake_system.agent)  # 基于官方推荐模式：直接异步调用
 
     # 创建音频传输（在创建 TTS Processor 之前）
     print("\n⏳ 正在创建音频传输...")

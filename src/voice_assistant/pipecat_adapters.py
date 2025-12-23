@@ -195,38 +195,42 @@ class SherpaASRProcessor(FrameProcessor):
 
 class ReactAgentProcessor(FrameProcessor):
     """
-    React Agent 适配器
+    React Agent Processor - 基于 MCP 官方推荐模式
 
-    将现有的 ReactAgent 封装为 Pipecat Processor
-    接收文本帧，调用 execute_command（异步模式），输出响应文本
-    支持后台执行，不阻塞 Pipeline
+    使用完全异步的实现：
+    - 直接调用 agent.execute_command_async()
+    - 在主事件循环中执行 MCP 调用
+    - 后台任务执行，不阻塞 Pipeline
     """
 
-    def __init__(self, react_agent, main_loop=None):
+    def __init__(self, react_agent):
+        """
+        初始化 React Agent Processor
+
+        Args:
+            react_agent: ReactAgent 实例（已初始化 MCP）
+        """
         super().__init__()
         self.agent = react_agent
-        self.main_loop = main_loop  # 保存主事件循环引用
-        self.current_task = None  # 当前运行的任务
-        self.cancel_flag = False  # 取消标志
+        self.current_task = None
+        self.cancel_flag = False
 
     async def process_frame(self, frame, direction):
-        """处理文本帧，执行 React Agent"""
+        """处理帧"""
         await super().process_frame(frame, direction)
 
-        # 检测唤醒词，取消当前任务
+        # 检查唤醒词，取消当前任务
         if isinstance(frame, WakeWordDetectedFrame):
             if self.current_task and not self.current_task.done():
                 print("⏸️  检测到新唤醒词，取消当前 Agent 任务")
                 self.cancel_flag = True
                 self.current_task.cancel()
-            # 传递唤醒帧
             await self.push_frame(frame, direction)
             return
 
+        # 处理文本命令
         if isinstance(frame, TextFrame):
             print(f"🤖 React Agent 处理: {frame.text}")
-
-            # 重置取消标志
             self.cancel_flag = False
 
             # 创建后台任务（不等待完成）
@@ -234,151 +238,44 @@ class ReactAgentProcessor(FrameProcessor):
                 self._execute_and_push_result(frame.text, direction)
             )
 
-            # 传递原始帧（不等待任务完成）
+            # 立即传递帧，不阻塞 Pipeline
             await self.push_frame(frame, direction)
         else:
             # 其他帧直接传递
             await self.push_frame(frame, direction)
 
     async def _execute_and_push_result(self, command: str, direction):
-        """在后台执行命令并推送结果"""
+        """
+        执行命令并推送结果（后台任务）
+
+        基于 MCP 官方推荐模式：直接异步调用，无需线程
+        """
         try:
-            # 使用异步执行（带超时）
-            result = await asyncio.wait_for(
-                self._execute_command_async(command),
-                timeout=60.0  # 60秒超时
-            )
+            print(f"✨ 开始执行命令: {command}")
+
+            # 使用官方推荐的异步方式直接调用
+            result = await self.agent.execute_command_async(command, enable_voice=False)
+
+            print(f"✅ 执行完成: success={result.get('success')}")
 
             # 检查是否被取消
             if self.cancel_flag:
-                print("⏸️  Agent 任务已取消")
+                print("⏸️  任务已取消，不推送结果")
                 return
 
-            if result.get("success"):
-                response = result.get("message", "")
-                if response:
-                    print(f"💬 响应: {response}")
-                    await self.push_frame(
-                        TextFrame(text=response),
-                        direction
-                    )
-            else:
-                error_msg = result.get("message", "执行失败")
-                print(f"❌ 错误: {error_msg}")
-                await self.push_frame(
-                    TextFrame(text=f"抱歉，{error_msg}"),
-                    direction
-                )
+            # 推送结果文本（如果成功）
+            if result.get("success") and result.get("message"):
+                result_frame = TextFrame(result["message"])
+                await self.push_frame(result_frame, direction)
 
-        except asyncio.TimeoutError:
-            print("⏱️  Agent 任务超时（60秒）")
-            await self.push_frame(
-                TextFrame(text="抱歉，任务执行超时"),
-                direction
-            )
         except asyncio.CancelledError:
-            print("⏸️  Agent 任务被取消")
+            print("⏸️  任务被取消")
+            raise
         except Exception as e:
-            print(f"❌ Agent 执行异常: {e}")
+            print(f"❌ 执行异常: {e}")
             import traceback
             traceback.print_exc()
 
-    async def _execute_command_async(self, command: str) -> dict:
-        """
-        异步执行命令（Pipecat 专用）
-
-        使用 run_coroutine_threadsafe 从新线程向主事件循环提交 MCP 调用
-        """
-        import threading
-        import queue
-        import concurrent.futures
-
-        result_queue = queue.Queue()
-
-        def run_in_thread():
-            """在独立线程中运行 execute_command，使用 run_coroutine_threadsafe 调用 MCP"""
-            import asyncio
-
-            print(f"[调试] 开始在线程中执行命令: {command}")
-
-            # 创建新的事件循环（不干扰主循环）
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-            # 保存原始 MCP call_tool 方法
-            original_call_tool = self.agent.mcp.call_tool
-
-            # 创建包装器：使用 run_coroutine_threadsafe 调用主循环
-            def call_tool_wrapper(tool_name, args):
-                """在主循环中执行 MCP 调用"""
-                print(f"[调试] 通过 run_coroutine_threadsafe 调用工具: {tool_name}")
-
-                # 使用 run_coroutine_threadsafe 在主循环中执行
-                future = asyncio.run_coroutine_threadsafe(
-                    self.agent.mcp.call_tool_async(tool_name, args),
-                    self.main_loop
-                )
-
-                # 等待结果（带超时）
-                try:
-                    result = future.result(timeout=30.0)
-                    print(f"[调试] 工具调用成功: {tool_name}")
-                    return result
-                except concurrent.futures.TimeoutError:
-                    print(f"[调试] 工具调用超时: {tool_name}")
-                    from .mcp_client import MCPResponse
-                    return MCPResponse(success=False, error="工具调用超时")
-
-            # 临时替换 call_tool 方法
-            self.agent.mcp.call_tool = call_tool_wrapper
-
-            try:
-                # 执行命令
-                print("[调试] 开始调用 execute_command...")
-                result = self.agent.execute_command(command, enable_voice=False)
-                print(f"[调试] execute_command 完成，结果: success={result.get('success')}")
-                result_queue.put(("success", result))
-            except Exception as e:
-                print(f"[调试] execute_command 异常: {e}")
-                import traceback
-                traceback.print_exc()
-                result_queue.put(("error", str(e)))
-            finally:
-                # 恢复原始方法
-                self.agent.mcp.call_tool = original_call_tool
-                print("[调试] 清理事件循环...")
-                loop.close()
-
-        # 启动线程
-        print(f"[调试] 启动执行线程...")
-        thread = threading.Thread(target=run_in_thread, daemon=True)
-        thread.start()
-
-        # 等待结果（带超时，最多等待 50 秒）
-        print("[调试] 等待线程结果...")
-        try:
-            status, result = await asyncio.wait_for(
-                asyncio.to_thread(result_queue.get),
-                timeout=50.0
-            )
-            print(f"[调试] 收到结果: status={status}")
-        except asyncio.TimeoutError:
-            print("[调试] ⏱️  线程执行超时（50秒），强制返回错误")
-            return {"success": False, "message": "命令执行超时"}
-
-        # 等待线程结束（带超时）
-        print("[调试] 等待线程结束...")
-        try:
-            await asyncio.wait_for(
-                asyncio.to_thread(thread.join),
-                timeout=5.0
-            )
-        except asyncio.TimeoutError:
-            print("[调试] ⚠️  线程未能在 5 秒内结束")
-
-        if status == "error":
-            return {"success": False, "message": result}
-        return result
 
 
 # ==================== Piper TTS Processor ====================

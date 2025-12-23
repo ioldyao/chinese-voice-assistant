@@ -216,7 +216,7 @@ class ReactAgent:
 
     def execute_command(self, user_command: str, enable_voice: bool = True) -> Dict:
         """
-        执行用户命令（智能判断使用 Vision 或 React 循环）
+        执行用户命令（智能判断使用 Vision 或 React 循环）- 同步版本（用于传统模式）
 
         Args:
             user_command: 用户指令
@@ -243,6 +243,35 @@ class ReactAgent:
             else:
                 self.logger.info("使用 React 模式（操作执行）")
                 return self._react_mode(user_command, enable_voice)
+        finally:
+            # 执行完成，清除执行标志
+            self.is_executing = False
+            self.interrupt_flag = False
+
+    async def execute_command_async(self, user_command: str, enable_voice: bool = False) -> Dict:
+        """
+        执行用户命令 - 异步版本（用于 Pipecat 模式）
+
+        基于 MCP 官方推荐模式：完全异步执行
+
+        Args:
+            user_command: 用户指令
+            enable_voice: 是否语音播报（Pipecat 模式下通常为 False，由 TTS Processor 处理）
+
+        Returns:
+            执行结果
+        """
+        self.logger.info(f"🤖 开始执行 (async): {user_command}")
+
+        # 标记为执行中
+        self.is_executing = True
+        self.interrupt_flag = False
+
+        try:
+            # Pipecat 模式：目前只支持 React 模式（浏览器操作）
+            # Vision 模式可以后续添加
+            self.logger.info("使用 React 模式 (async)")
+            return await self._react_mode_async(user_command, enable_voice)
         finally:
             # 执行完成，清除执行标志
             self.is_executing = False
@@ -457,9 +486,108 @@ class ReactAgent:
         screenshot.save(temp_path)
         return temp_path
 
+    async def _react_mode_async(self, user_command: str, enable_voice: bool = False) -> Dict:
+        """
+        React 操作模式 - 异步版本（用于 Pipecat 模式）
+
+        基于官方推荐模式：完全异步的 React 循环
+
+        Args:
+            user_command: 用户指令
+            enable_voice: 是否语音播报（Pipecat 模式下通常为 False）
+
+        Returns:
+            执行结果
+        """
+        # 重置历史
+        self.history = []
+
+        # React 循环
+        for step in range(self.max_steps):
+            # 检查中断标志
+            if self.interrupt_flag:
+                print("\n⚠️ 检测到中断请求，停止执行")
+                self.logger.warning("用户中断执行")
+                return {
+                    "success": False,
+                    "message": "用户中断",
+                    "steps": step,
+                    "interrupted": True
+                }
+
+            print(f"\n--- 步骤 {step + 1} ---")
+            self.logger.info(f"\n--- Step {step + 1} ---")
+
+            # 1. LLM 思考：下一步做什么
+            parsed_action = self._think(user_command)
+
+            if not parsed_action:
+                print("❌ 思考失败")
+                self.logger.error("❌ 思考失败")
+                break
+
+            # 2. 判断是否完成
+            if parsed_action.get("done", False):
+                print("✅ 任务完成")
+                self.logger.info("✅ 任务完成")
+                return {
+                    "success": True,
+                    "message": parsed_action.get("final_answer", "任务完成"),
+                    "steps": step + 1
+                }
+
+            # 3. 执行动作（异步）
+            print(f"🎯 执行: {parsed_action['action']}")
+            print(f"   参数: {parsed_action['action_input']}")
+            observation = await self._execute_action_async(
+                parsed_action["action"],
+                parsed_action["action_input"]
+            )
+
+            # 执行后再次检查中断
+            if self.interrupt_flag:
+                print("\n⚠️ 检测到中断请求，停止执行")
+                self.logger.warning("用户中断执行")
+                return {
+                    "success": False,
+                    "message": "用户中断",
+                    "steps": step + 1,
+                    "interrupted": True
+                }
+
+            # 4. 显示结果
+            if observation and observation.success:
+                print(f"✓ 成功: {observation.content[:100] if observation.content else '执行成功'}")
+            else:
+                error_msg = observation.error if observation else '未知错误'
+                print(f"✗ 失败: {error_msg}")
+
+            # 5. 记录历史（带时间戳）
+            import time
+            self.history.append(ReActStep(
+                thought=parsed_action["thought"],
+                action=parsed_action["action"],
+                action_input=parsed_action["action_input"],
+                observation=observation.content if observation else "执行失败",
+                success=observation.success if observation else False,
+                timestamp=time.time()
+            ))
+
+            # 6. 如果失败，继续尝试调整策略
+            if not (observation and observation.success):
+                self.logger.warning(f"⚠️ 步骤失败: {observation.error if observation else '未知错误'}")
+
+        # 超过最大步数
+        self.logger.warning("⚠️ 超过最大步数，任务未完成")
+        return {
+            "success": False,
+            "message": "超过最大步数",
+            "steps": self.max_steps
+        }
+
     def _react_mode(self, user_command: str, enable_voice: bool) -> Dict:
         """
-        React 操作模式（使用 MCP 工具）
+        React 操作模式（使用 MCP 工具）- 同步版本（用于传统模式）
 
         Args:
             user_command: 用户指令
@@ -781,7 +909,7 @@ Final Answer: [总结结果]
 
     def _execute_action(self, action: str, action_input: Dict[str, Any]) -> Optional[MCPResponse]:
         """
-        执行动作
+        执行动作（同步版本，用于传统模式）
 
         Args:
             action: 工具名称
@@ -807,6 +935,39 @@ Final Answer: [总结结果]
 
         except Exception as e:
             self.logger.error(f"执行动作失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return MCPResponse(success=False, error=str(e))
+
+    async def _execute_action_async(self, action: str, action_input: Dict[str, Any]) -> Optional[MCPResponse]:
+        """
+        执行动作（异步版本，用于 Pipecat 模式）
+
+        基于 MCP 官方推荐模式：直接使用 await call_tool_async()
+
+        Args:
+            action: 工具名称
+            action_input: 工具参数
+
+        Returns:
+            MCPResponse 对象
+        """
+        if not action:
+            return MCPResponse(success=False, error="未指定工具")
+
+        try:
+            # 确保参数不为空
+            if not action_input:
+                action_input = {}
+
+            self.logger.debug(f"执行工具 (async): {action}, 参数: {action_input}")
+
+            # 使用官方推荐的异步调用方式
+            result = await self.mcp.call_tool_async(action, action_input)
+            return result
+
+        except Exception as e:
+            self.logger.error(f"执行动作失败 (async): {e}")
             import traceback
             traceback.print_exc()
             return MCPResponse(success=False, error=str(e))
