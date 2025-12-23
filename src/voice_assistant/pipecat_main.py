@@ -267,11 +267,19 @@ async def run_pipeline_with_audio(pipeline, transport):
         # 创建 PipelineRunner 并运行
         runner = PipelineRunner()
 
-        # 并行运行 Pipeline 和音频输入
-        await asyncio.gather(
-            runner.run(task),
-            audio_input_loop()
-        )
+        # 创建音频输入任务（作为后台任务）
+        audio_task = asyncio.create_task(audio_input_loop())
+
+        try:
+            # 运行 Pipeline（主任务）
+            await runner.run(task)
+        finally:
+            # Pipeline 结束时，取消音频输入任务
+            audio_task.cancel()
+            try:
+                await audio_task
+            except asyncio.CancelledError:
+                pass
 
     except asyncio.CancelledError:
         # 发送 EndFrame 结束
