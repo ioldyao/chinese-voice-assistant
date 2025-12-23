@@ -296,36 +296,17 @@ async def main():
         # 创建 Pipeline
         pipeline, transport, wake_system = await create_pipecat_pipeline()
 
-        # 设置信号处理（Ctrl+C 优雅退出）
-        loop = asyncio.get_event_loop()
-        stop_event = asyncio.Event()
+        # 运行 Pipeline（让 Pipecat 处理 Ctrl+C）
+        await run_pipeline_with_audio(pipeline, transport)
 
-        def signal_handler(sig, frame):
-            print("\n⏹️  收到退出信号...")
-            stop_event.set()
-
-        signal.signal(signal.SIGINT, signal_handler)
-
-        # 运行 Pipeline
-        pipeline_task = asyncio.create_task(
-            run_pipeline_with_audio(pipeline, transport)
-        )
-
-        # 等待退出信号
-        await stop_event.wait()
-
-        # 取消 Pipeline 任务
-        pipeline_task.cancel()
-        try:
-            await pipeline_task
-        except asyncio.CancelledError:
-            pass
-
+    except KeyboardInterrupt:
+        print("\n⏹️  收到退出信号...")
+    except asyncio.CancelledError:
+        print("\n⏹️  Pipeline 已取消")
     except Exception as e:
-        print(f"❌ 启动失败: {e}")
+        print(f"\n❌ 启动失败: {e}")
         import traceback
         traceback.print_exc()
-        sys.exit(1)
 
     finally:
         # 清理资源
