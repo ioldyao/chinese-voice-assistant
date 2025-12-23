@@ -231,7 +231,7 @@ async def create_pipecat_pipeline():
     print("   默认唤醒词: 小智、你好助手、智能助手")
     print("   按 Ctrl+C 退出\n")
 
-    return pipeline, transport
+    return pipeline, transport, wake_system
 
 
 async def run_pipeline_with_audio(pipeline, transport):
@@ -290,10 +290,11 @@ async def main():
     """Pipecat 主程序"""
     pipeline = None
     transport = None
+    wake_system = None
 
     try:
         # 创建 Pipeline
-        pipeline, transport = await create_pipecat_pipeline()
+        pipeline, transport, wake_system = await create_pipecat_pipeline()
 
         # 设置信号处理（Ctrl+C 优雅退出）
         loop = asyncio.get_event_loop()
@@ -328,8 +329,23 @@ async def main():
 
     finally:
         # 清理资源
+        print("\n🧹 正在清理资源...")
+
+        # 1. 停止音频传输
         if transport:
-            await transport.stop()
+            try:
+                await transport.stop()
+                print("  ✓ 音频传输已停止")
+            except Exception as e:
+                print(f"  ⚠️ 停止音频传输时出错: {e}")
+
+        # 2. 停止 MCP Servers
+        if wake_system and hasattr(wake_system, 'agent'):
+            try:
+                await wake_system.agent.mcp.stop_all_async()
+                print("  ✓ MCP Servers 已停止")
+            except Exception as e:
+                print(f"  ⚠️ 停止 MCP Servers 时出错: {e}")
 
         print("\n👋 再见！")
 
