@@ -161,7 +161,7 @@ async def create_pipecat_pipeline():
     success_count = 0
     for name, command, args, timeout in servers:
         try:
-            success = await wake_system.agent.mcp.manager.add_server_async(
+            success = await wake_system.agent.mcp.add_server_async(
                 name, command, args, timeout
             )
             if success:
@@ -179,7 +179,7 @@ async def create_pipecat_pipeline():
         wake_system.agent.mcp.loop = asyncio.get_event_loop()
 
         # 获取工具列表（使用异步方法）
-        wake_system.agent.available_tools = await wake_system.agent.mcp.manager.list_all_tools_async()
+        wake_system.agent.available_tools = await wake_system.agent.mcp.list_all_tools_async()
         playwright_tools = [
             tool for tool in wake_system.agent.available_tools
             if tool.get("server") == "playwright"
