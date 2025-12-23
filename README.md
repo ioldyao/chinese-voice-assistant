@@ -2,9 +2,9 @@
 
 <div align="center">
 
-**双阶段语音识别 + React智能代理 + Playwright浏览器控制 + 多引擎TTS**
+**双阶段语音识别 + React智能代理 + Playwright浏览器控制 + Pipecat实时音频处理**
 
-基于 Sherpa-ONNX + Qwen + Playwright MCP + Piper 的中文语音助手
+基于 Sherpa-ONNX + Qwen + Playwright MCP + Piper + Pipecat 的中文语音助手
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -14,33 +14,52 @@
 
 ## ✨ 特性
 
-### 🎯 双阶段识别架构
-- **阶段1 - 唤醒词检测（KWS）**: 轻量级关键词检测（3.3MB），持续监听，CPU占用低
-- **阶段2 - 语音识别（ASR）**: 唤醒后启动完整语音识别（120MB），准确率高
+### 🎯 双模式架构
+- **传统模式 (Traditional)**: 经典架构，稳定可靠
+- **Pipecat 模式 (Experimental)**: 基于 Pipecat 框架的实时音频流处理
 
 ### 🚀 核心功能
-- **🎤 语音唤醒**: 支持自定义唤醒词（默认：小智、你好助手、智能助手）
-- **🗣️ 语音识别**: 基于 Paraformer 的中文 ASR，识别准确，自动静音检测
-- **🔊 语音合成**: 三种TTS引擎
+- **🎤 语音唤醒**:
+  - **阶段1 - KWS**: 轻量级关键词检测（3.3MB），持续监听，CPU占用低
+  - **阶段2 - ASR**: 唤醒后启动完整语音识别（120MB），准确率高
+  - 支持自定义唤醒词（默认：小智、你好助手、智能助手）
+
+- **🧠 React Agent**: 多轮推理决策框架
+  - 自动规划执行步骤
+  - 支持同步（传统模式）和异步（Pipecat 模式）执行
+  - 基于 MCP Python SDK 官方推荐模式
+
+- **🎭 Playwright MCP**: 浏览器自动化操作
+  - 网页导航、元素交互、截图、PDF生成等
+  - 支持 Chrome/Firefox/Safari 浏览器控制
+  - **完全异步**的工具调用（符合 MCP 官方最佳实践）
+
+- **🔊 语音合成**: 多引擎支持
   - **Piper TTS** - 本地超低延迟（推荐）⚡
   - **RealtimeTTS** - 流式实时播放 🎵
   - **MeloTTS** - 中英文混合支持 🌐
-- **🧠 React Agent**: 多轮推理决策框架，自动规划执行步骤
-- **🎭 Playwright MCP**: 浏览器自动化操作（主要使用）
-  - 网页导航、元素交互、截图、PDF生成等
-  - 支持 Chrome/Firefox/Safari 浏览器控制
-- **👁️ 视觉理解**: Qwen-VL-Max 多模态理解，可分析屏幕内容
+
+- **👁️ 视觉理解**: Qwen-VL-Max 多模态理解
+  - 屏幕内容分析
+  - 支持窗口/全屏截图
+
 - **💾 长期记忆**: 5分钟时间窗口的跨会话记忆持久化
 
 ### 🎨 技术亮点
+
+#### 传统模式
 - 📦 模块化架构，代码结构清晰
-- ⚡ **高性能**：Playwright 浏览器自动化，精确可靠
-- 🎯 **高准确率**：浏览器操作准确率可达 **95%+**
-- 🌐 云端大模型集成（Qwen-Plus）
+- 🎯 浏览器操作准确率可达 **95%+**
 - 🔇 智能静音检测，说完即停
-- 🎵 TTS播放期间自动暂停监听
 - 🛡️ 支持执行中断（可被新唤醒词打断）
-- 🧠 本地+云端混合推理
+
+#### Pipecat 模式（实验性）
+- ⚡ **完全异步架构** - 基于 Pipecat 实时音频框架
+- 🎯 **官方推荐模式** - 符合 MCP Python SDK 最佳实践
+- 🔄 **Pipeline 流式处理** - KWS → ASR → Agent → TTS 流水线
+- 🚀 **零线程开销** - 纯异步，无 `run_coroutine_threadsafe`
+- 🛡️ **非阻塞执行** - Agent 后台运行，不阻塞音频处理
+- ⏸️ **智能中断** - TTS 播放可被新唤醒词打断
 
 ---
 
@@ -48,8 +67,9 @@
 
 ### 1. 环境要求
 - Python 3.12+
-- Windows 10/11（系统控制功能仅支持 Windows）
+- Windows 10/11
 - 麦克风设备
+- Node.js 18+（用于 Playwright MCP）
 
 ### 2. 克隆项目
 ```bash
@@ -80,7 +100,6 @@ python download_piper_model.py
 - **ASR 模型**（120MB）- Paraformer 中文（语音识别）
 - **Piper TTS 模型**（~50MB）- 中文语音合成（本地、超低延迟）
 - **VAD 模型**（1MB）- Silero VAD（静音检测）
-- **MeloTTS 模型**（可选）- 中英文混合（备选方案）
 
 ---
 
@@ -114,14 +133,7 @@ export ALIYUN_APPKEY="your-app-key-here"
 x iǎo zh ì @小智
 n ǐ h ǎo zh ù sh ǒu @你好助手
 zh ì n éng zh ù sh ǒu @智能助手
-x iǎo ài t óng x ué @小爱同学
 ```
-
-**说明：**
-- 使用带声调符号的拼音音节（ā á ǎ à ē é ě è 等）
-- 音节之间用空格分隔
-- 使用 @ 符号分隔拼音和中文
-- 文件使用 UTF-8 编码（无需 BOM）
 
 ---
 
@@ -132,6 +144,28 @@ x iǎo ài t óng x ué @小爱同学
 python main.py
 ```
 
+启动时会提示选择运行模式：
+```
+请选择运行模式：
+  1. 传统模式 (原有架构)
+  2. Pipecat 模式 (新架构，实验性)
+请选择 (1/2，默认1):
+```
+
+### 模式说明
+
+#### **传统模式** (推荐)
+- ✅ 稳定可靠，经过充分测试
+- ✅ 完整功能支持（Vision + MCP）
+- ✅ 适合日常使用
+
+#### **Pipecat 模式** (实验性)
+- 🧪 基于 Pipecat 实时音频框架
+- ⚡ 完全异步架构，性能更优
+- 🔄 Pipeline 流式处理
+- 📝 目前支持：KWS + ASR + Agent + TTS
+- ⚠️ Vision 模式暂未集成
+
 ### 交互流程
 1. **唤醒**: 说出唤醒词（如"小智"）
 2. **指令**: 听到提示音后，说出指令
@@ -139,45 +173,31 @@ python main.py
 
 ### 支持的指令示例
 
-#### 🌐 浏览器导航（基于 Playwright MCP）
+#### 🌐 浏览器导航
 ```
-"打开浏览器访问百度"
-"访问 https://www.github.com"
+"打开 B 站"
+"访问百度"
 "浏览器后退"
-"浏览器前进"
 "刷新页面"
-"关闭当前标签页"
 ```
 
-#### 🖱️ 网页交互（基于 Playwright MCP）
+#### 🖱️ 网页交互
 ```
 "点击搜索框"
 "点击登录按钮"
 "在输入框输入测试文本"
-"填写表单"
-"提交表单"
-"滚动到页面底部"
 ```
 
-#### 📸 屏幕截图（基于 Playwright MCP）
+#### 📸 屏幕截图
 ```
 "截取当前页面"
 "保存页面为PDF"
-"截图保存"
 ```
 
-#### 🔍 信息提取（基于 Playwright MCP）
-```
-"获取页面标题"
-"获取页面内容"
-"查看浏览器控制台"
-```
-
-#### 👁️ 视觉理解（基于 Vision）
+#### 👁️ 视觉理解（仅传统模式）
 ```
 "看看浏览器窗口显示了什么"
 "分析当前屏幕内容"
-"这个页面是关于什么的"
 ```
 
 ---
@@ -187,61 +207,56 @@ python main.py
 ```
 chinese-voice-assistant/
 ├── src/voice_assistant/      # 核心源代码
-│   ├── __init__.py           # 模块导出
-│   ├── config.py             # 配置管理
-│   ├── wake_word.py          # 唤醒词系统 (双阶段识别)
-│   ├── react_agent.py        # React 智能代理 (推理框架)
-│   ├── mcp_client.py         # MCP 客户端 (Playwright 浏览器控制)
-│   ├── tts.py                # TTS 语音合成 (多引擎管理)
-│   └── vision.py             # 视觉理解 (Qwen-VL-Max)
+│   ├── __init__.py           # 模块导出 (30行)
+│   ├── config.py             # 配置管理 (40行)
+│   ├── wake_word.py          # 唤醒词系统 (352行)
+│   ├── react_agent.py        # React 智能代理 (1040行)
+│   │                         # - execute_command (同步，传统模式)
+│   │                         # - execute_command_async (异步，Pipecat模式)
+│   ├── mcp_client.py         # MCP 客户端 (578行)
+│   │                         # - MCPManager (异步，多Server管理)
+│   │                         # - MCPManagerSync (同步，传统模式封装)
+│   ├── pipecat_main.py       # Pipecat 主程序 (323行)
+│   ├── pipecat_adapters.py   # Pipecat Processors (356行)
+│   │                         # - SherpaKWSProcessor (KWS)
+│   │                         # - SherpaASRProcessor (ASR)
+│   │                         # - ReactAgentProcessor (Agent)
+│   │                         # - PiperTTSProcessor (TTS)
+│   ├── tts.py                # TTS 语音合成 (666行)
+│   └── vision.py             # 视觉理解 (72行)
 │
 ├── scripts/                  # 工具脚本
 │   ├── download_models.py    # 模型下载
-│   ├── pinyin_helper.py      # 拼音转换助手
-│   └── install_playwright.bat # Playwright 安装
+│   └── pinyin_helper.py      # 拼音转换助手
 │
 ├── tests/                    # 测试文件
-│   ├── quick_test_fixed.py   # TTS/ASR/KWS 快速测试
-│   ├── test_models.py        # 完整模型测试
-│   └── test_screenshot.py    # 截图功能测试
+│   └── test_phase1.py        # Pipecat 模式测试
 │
 ├── config/                   # 配置文件
-│   ├── keywords.txt          # 唤醒词配置 (主)
-│   ├── wake_words.txt        # 唤醒词配置 (备)
-│   └── chinese_wake_words.txt # 中文唤醒词
+│   └── keywords.txt          # 唤醒词配置
 │
 ├── models/                   # 模型文件（需下载）
 │   ├── piper/                # Piper TTS 模型
-│   ├── sherpa-onnx-kws-*/    # KWS 关键词检测
-│   └── sherpa-onnx-paraformer-zh/ # ASR 语音识别
-│
-├── docs/                     # 文档
-│   ├── MCP_INTEGRATION.md    # MCP 集成指南
-│   └── PLAYWRIGHT_SETUP.md   # Playwright 设置
-│
-├── data/                     # 运行时数据
-│   ├── tts_audio/           # TTS 音频缓存
-│   └── memory/              # 长期记忆存储
+│   ├── sherpa-onnx-kws-*/    # KWS 模型 (3.3MB)
+│   └── sherpa-onnx-paraformer-zh/ # ASR 模型 (120MB)
 │
 ├── main.py                   # 主程序入口
-├── download_piper_model.py   # Piper 模型下载
 ├── pyproject.toml            # 项目配置 (v2.0.0)
 └── README.md                 # 项目文档
 ```
 
----
-
-## 🧪 测试
-
-### 测试所有模型
-```bash
-python tests/test_models.py
-```
-
-### 快速测试
-```bash
-python tests/quick_test_fixed.py
-```
+### 代码统计
+| 模块 | 代码行数 | 主要功能 |
+|-----|---------|---------|
+| `react_agent.py` | 1040 | React 推理框架、同步+异步执行 |
+| `tts.py` | 666 | TTS 引擎管理（Piper/RealtimeTTS/MeloTTS） |
+| `mcp_client.py` | 578 | MCP 客户端、多 Server 管理 |
+| `pipecat_adapters.py` | 356 | Pipecat Processors |
+| `wake_word.py` | 352 | 双阶段识别（KWS + ASR） |
+| `pipecat_main.py` | 323 | Pipecat Pipeline 配置 |
+| `vision.py` | 72 | Qwen-VL-Max 视觉理解 |
+| `config.py` | 40 | 全局配置 |
+| **总计** | **3,457** | **完整功能实现** |
 
 ---
 
@@ -259,52 +274,64 @@ black src/
 ruff check src/
 ```
 
-### 核心模块说明
-项目采用模块化设计，各模块职责清晰：
+### 架构说明
 
-| 模块 | 职责 | 代码行数 |
-|-----|------|---------|
-| `wake_word.py` | 双阶段识别（KWS + ASR）、音频录制、静音检测 | ~13K |
-| `react_agent.py` | React 推理框架、多轮决策、长期记忆管理 | ~32K |
-| `mcp_client.py` | MCP 客户端、Playwright 浏览器自动化 | ~19K |
-| `tts.py` | TTS 引擎管理（Piper/RealtimeTTS/MeloTTS） | ~24K |
-| `vision.py` | Qwen-VL-Max 视觉理解、屏幕截图分析 | ~73 |
-| `config.py` | 全局配置、API Keys、路径管理 | - |
+#### **传统模式架构**
+```
+音频输入 → KWS → ASR → React Agent → MCP Tools → TTS → 音频输出
+```
+
+#### **Pipecat 模式架构**
+```
+Pipeline:
+  SimplePyAudioTransport (音频I/O)
+    ↓
+  SherpaKWSProcessor (唤醒词检测)
+    ↓
+  SherpaASRProcessor (语音识别)
+    ↓
+  ReactAgentProcessor (智能代理，后台执行)
+    ↓
+  PiperTTSProcessor (语音合成，支持中断)
+    ↓
+  SimplePyAudioTransport (音频输出)
+```
+
+### 核心改进（Pipecat 模式）
+
+#### **1. 完全异步架构**
+```python
+# React Agent 异步支持
+async def execute_command_async(self, command: str) -> Dict:
+    return await self._react_mode_async(command)
+
+async def _execute_action_async(self, action: str, action_input: Dict):
+    # 直接使用官方 SDK 方法
+    result = await self.mcp.call_tool_async(action, action_input)
+```
+
+#### **2. ReactAgentProcessor 简化**
+- **之前**: 185 行（线程 + 包装器 + `run_coroutine_threadsafe`）
+- **现在**: 82 行（纯异步，-55% 代码）
+
+```python
+class ReactAgentProcessor(FrameProcessor):
+    async def _execute_and_push_result(self, command: str, direction):
+        # 直接异步调用，无需线程！
+        result = await self.agent.execute_command_async(command)
+```
+
+#### **3. 符合 MCP 官方推荐**
+```python
+# mcp_client.py:122 - 底层使用官方 SDK
+result = await self.session.call_tool(tool_name, args)  # ✅ 官方方法
+```
 
 ### 添加新功能
-1. **添加新的 Playwright 操作**: 在 `mcp_client.py` 中调用 Playwright 工具
-2. **添加新的 TTS 引擎**: 在 `tts.py` 的 `TTSManager` 类中添加引擎
+1. **添加新的 Pipecat Processor**: 在 `pipecat_adapters.py` 中继承 `FrameProcessor`
+2. **添加新的 MCP 工具**: 工具会自动路由到正确的 Server
 3. **添加新的唤醒词**: 编辑 `config/keywords.txt`
 4. **扩展 React Agent**: 在 `react_agent.py` 中添加新的推理逻辑
-
----
-
-## ⚠️ 注意事项
-
-1. **API 费用**: 使用阿里云 API（LLM、Vision）会产生费用，请注意配额
-   - 推荐使用 Piper TTS（免费本地）代替阿里云 TTS
-   - Playwright 操作本地执行，无 API 费用
-
-2. **隐私安全**:
-   - API Key 不要提交到公开仓库
-   - 建议使用环境变量管理敏感信息
-   - 本地模型（Piper、Sherpa-ONNX）无隐私风险
-
-3. **系统兼容**:
-   - Playwright 支持 Windows/Linux/macOS
-   - 需要安装 Node.js 和 npx（用于启动 Playwright MCP）
-   - 首次使用需要下载浏览器驱动
-
-4. **网络需求**:
-   - **无需网络**: KWS、ASR、Piper TTS（完全离线）
-   - **需要网络**: LLM 决策、Vision 理解、阿里云 TTS
-   - **首次需要**: Playwright MCP 安装（`npx @playwright/mcp@latest`）
-
-5. **性能建议**:
-   - Playwright 适合浏览器操作，准确率高
-   - 简单网页操作优先使用 Playwright
-   - 复杂场景结合 Vision 理解
-   - 推荐 Piper TTS（100ms 延迟 vs 500ms）
 
 ---
 
@@ -320,20 +347,20 @@ ruff check src/
 | 本地 TTS | Piper TTS | 超低延迟（推荐） |
 | 流式 TTS | RealtimeTTS | 实时流式播放 |
 | 混合 TTS | MeloTTS | 中英文支持 |
-| 云端 TTS | 阿里云 DashScope | 备选方案 |
 | **智能决策** | | |
 | 推理框架 | React Agent | 多轮思考+行动 |
 | LLM 模型 | Qwen-Plus | 意图理解+规划 |
 | 长期记忆 | JSON 持久化 | 5分钟时间窗口 |
 | **浏览器控制** | | |
-| MCP 框架 | Playwright MCP | 浏览器自动化 |
-| 网页交互 | Playwright | 跨浏览器支持 |
+| MCP 框架 | Model Context Protocol | 官方 Python SDK v1.25.0 |
+| 浏览器自动化 | Playwright MCP | 跨浏览器支持 |
+| **音频处理** | | |
+| 实时框架 | Pipecat AI v0.0.98 | Frame/Pipeline/Processor |
+| 音频I/O | PyAudio | 录音播放 |
 | **视觉理解** | | |
 | 多模态模型 | Qwen-VL-Max | 屏幕内容分析 |
 | 截图工具 | PIL ImageGrab | 屏幕截图 |
 | **其他** | | |
-| 音频处理 | PyAudio + NumPy | 录音播放 |
-| HTTP 请求 | requests | API 调用 |
 | Python 版本 | 3.12+ | 必需 |
 | Node.js | 18+ | Playwright MCP 必需 |
 
@@ -348,96 +375,102 @@ A:
 - 尝试提高音量，靠近麦克风说话
 - 检查是否下载了 KWS 模型（3.3MB）
 
-### Q: TTS 播放失败？
+### Q: 传统模式和 Pipecat 模式有什么区别？
 A:
-- **使用 Piper TTS（推荐）**: 完全本地，无需网络和 API
-- **使用阿里云 TTS**: 检查 API Key 是否正确，确认网络连接正常
-- 查看控制台错误信息
-- 确认已下载 Piper 模型：`python download_piper_model.py`
+- **传统模式**: 稳定可靠，完整功能（推荐日常使用）
+- **Pipecat 模式**: 实验性，完全异步架构，性能更优，但 Vision 暂未集成
 
-### Q: 如何选择 TTS 引擎？
-A: 在启动时会提示选择，建议：
-- **Piper TTS**: 最快，本地运行，推荐日常使用 ⚡
-- **RealtimeTTS**: 流式播放，适合长文本
-- **阿里云 TTS**: 音质最佳，但需要网络
-
-### Q: Playwright MCP 无法使用？
+### Q: MCP 工具调用失败？
 A:
 - 确认已安装 Node.js（版本 18+）
 - 检查 npx 命令是否可用：`npx --version`
-- 手动安装 Playwright MCP：`npx @playwright/mcp@latest`
-- 查看 `docs/PLAYWRIGHT_SETUP.md` 获取详细配置说明
-- 检查控制台是否有 Playwright 启动错误信息
+- 手动测试 Playwright MCP：`npx @playwright/mcp@latest`
+- 查看控制台错误信息
 
-### Q: 如何添加自定义唤醒词？
-A: 编辑 `config/keywords.txt`，格式为：`拼音音节 @中文`
-```text
-x iǎo ài t óng x ué @小爱同学
-t iān m āo j īng l íng @天猫精灵
-```
-**提示**: 使用 `scripts/pinyin_helper.py` 辅助生成带声调的拼音
-
-### Q: Vision 理解不准确？
+### Q: Pipecat 模式有什么优势？
 A:
-- Vision 现在主要用于复杂场景分析，浏览器操作推荐使用 Playwright
-- Playwright 工具直接操作浏览器，准确率更高
-- 如需使用 Vision，确保 DashScope API Key 正确配置
-- Vision 适合"看看这个页面是什么内容"这类理解任务
-
-### Q: 如何查看 React Agent 的推理过程？
-A:
-- 在控制台会输出完整的 Thought → Action → Observation 循环
-- 可以看到 Agent 的思考和决策步骤
-- 查看 `data/memory/` 目录了解长期记忆内容
+- ✅ 完全异步，无线程开销
+- ✅ 符合 MCP Python SDK 官方最佳实践
+- ✅ Pipeline 流式处理，更高效
+- ✅ 代码简洁（减少 55% 复杂度）
+- ✅ 非阻塞执行，响应更快
 
 ---
 
-## 🤝 贡献
+## ⚠️ 注意事项
 
-欢迎提交 Issue 和 Pull Request！
+1. **API 费用**: 使用阿里云 API（LLM、Vision）会产生费用
+   - 推荐使用 Piper TTS（免费本地）
+   - Playwright 操作本地执行，无 API 费用
 
----
+2. **隐私安全**:
+   - API Key 不要提交到公开仓库
+   - 建议使用环境变量管理敏感信息
+   - 本地模型（Piper、Sherpa-ONNX）无隐私风险
 
-## 📄 许可
+3. **系统兼容**:
+   - Playwright 支持跨平台
+   - Pipecat 模式目前在 Windows 上测试
 
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
+4. **网络需求**:
+   - **无需网络**: KWS、ASR、Piper TTS（完全离线）
+   - **需要网络**: LLM 决策、Vision 理解
+   - **首次需要**: Playwright MCP 安装
 
 ---
 
 ## 🔥 最近更新
 
-### v2.0.0 - 架构升级版本（2025-01）
+### v2.0.0 - 架构升级版本（2025-12）
 
 #### ✨ 新增特性
-1. **Piper TTS 集成** - 本地超低延迟语音合成
+1. **Pipecat 框架集成** - 实时音频流处理
+   - 完全异步 Pipeline 架构
+   - KWS → ASR → Agent → TTS 流水线
+   - 非阻塞执行，TTS 可中断
+
+2. **MCP 官方推荐模式重构**
+   - 基于 MCP Python SDK v1.25.0 官方最佳实践
+   - 移除所有线程和 `run_coroutine_threadsafe`
+   - 纯异步调用 `await session.call_tool()`
+   - ReactAgentProcessor 代码减少 55%
+
+3. **双模式架构**
+   - 传统模式：稳定可靠，完整功能
+   - Pipecat 模式：实验性，完全异步
+
+4. **Piper TTS 集成** - 本地超低延迟语音合成
    - 延迟降低至 100-200ms
    - 完全离线运行
    - 中文音色自然
 
-2. **RealtimeTTS 支持** - 流式实时播放
-   - 边生成边播放
-   - 更好的实时体验
-
-3. **Playwright MCP 集成** - 浏览器自动化控制
+5. **Playwright MCP 集成** - 浏览器自动化控制
    - 网页导航、元素交互、截图
    - 支持 Chrome/Firefox/Safari
-   - 跨平台支持（Windows/Linux/macOS）
+   - 跨平台支持
 
-4. **React Agent 框架** - 智能推理决策
+6. **React Agent 框架** - 智能推理决策
    - 多轮思考+行动循环
+   - 支持同步和异步执行
    - 自动错误纠正
    - 长期记忆支持
 
 #### 🐛 Bug 修复
-- 修复 Piper TTS 长文本截断问题
-- 修复 Vision API 错误处理
-- 添加 Vision 模式中断检查
-- 改进 JSON 格式化和解析
+- 修复 Pipecat 模式 Agent 阻塞 Pipeline 问题
+- 修复 MCP 事件循环冲突导致超时
+- 添加 TTS 中断机制
+- 支持后台任务取消
 
 #### 📊 性能提升
 - TTS 延迟从 500ms → 100ms（Piper）
-- Playwright 浏览器操作响应迅速
-- React Agent 智能规划优化执行流程
+- MCP 调用完全异步，无线程开销
+- Pipeline 流式处理，不阻塞
+
+#### 🔧 技术改进
+- 符合 MCP Python SDK 官方推荐模式
+- 代码简化 55%（185行 → 82行）
+- 完全异步架构
+- 易于维护和扩展
 
 ---
 
@@ -445,7 +478,8 @@ A:
 
 - [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx) - 高性能语音识别框架
 - [Playwright](https://playwright.dev/) - 强大的浏览器自动化工具
-- [Playwright MCP](https://github.com/modelcontextprotocol/servers/tree/main/src/playwright) - Playwright MCP 服务器
+- [Model Context Protocol](https://modelcontextprotocol.io/) - MCP 官方 Python SDK
+- [Pipecat AI](https://github.com/pipecat-ai/pipecat) - 实时音频处理框架
 - [Piper TTS](https://github.com/rhasspy/piper) - 快速本地文本转语音引擎
 - [RealtimeTTS](https://github.com/KoljaB/RealtimeTTS) - 流式语音合成库
 - [阿里云 DashScope](https://dashscope.aliyun.com/) - 多模态 API 和 LLM 服务
