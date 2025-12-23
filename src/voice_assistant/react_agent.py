@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .config import DASHSCOPE_API_KEY, DASHSCOPE_API_URL
 from .mcp_client import MCPManager, MCPResponse
-from .tts import TTSManagerStreaming
+from .tts import TTSManager
 from .vision import VisionUnderstanding
 
 
@@ -144,7 +144,7 @@ class ReactAgent:
         self.mcp = MCPManager()
 
         # TTS（流式 - Piper 本地，超快）
-        self.tts = TTSManagerStreaming(engine_type="piper")
+        self.tts = TTSManager(engine_type="piper")
 
         # Vision（视觉理解）
         self.vision = VisionUnderstanding(api_url, api_key)
