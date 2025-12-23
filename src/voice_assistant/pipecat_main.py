@@ -280,10 +280,12 @@ async def run_pipeline_with_audio(pipeline, transport):
         except:
             pass
         print("\n⏹️  Pipeline 已停止")
+        raise  # 重新抛出异常，让 main() 处理
     except Exception as e:
         print(f"\n❌ Pipeline 运行错误: {e}")
         import traceback
         traceback.print_exc()
+        raise  # 重新抛出异常
 
 
 async def main():
