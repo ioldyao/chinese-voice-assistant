@@ -17,6 +17,9 @@ from pipecat.frames.frames import (
     TTSAudioRawFrame,
     InterruptionFrame,  # ✅ 官方中断帧
     TTSStoppedFrame,    # ✅ 官方 TTS 停止帧
+    TranscriptionFrame,  # ✅ 用于 LLMUserContextAggregator
+    UserStartedSpeakingFrame,  # ✅ 用户开始说话
+    UserStoppedSpeakingFrame,  # ✅ 触发 LLM 处理
     EndFrame,
 )
 
@@ -61,7 +64,13 @@ class SherpaKWSProcessor(FrameProcessor):
                 self.is_awake = True
                 self.last_keyword = result
 
-                # ✅ 发出官方中断帧（Pipecat 标准）
+                # ✅ 发送用户开始说话的信号
+                await self.push_frame(
+                    UserStartedSpeakingFrame(),
+                    direction
+                )
+
+                # ✅ 发出官方中断帧（触发 ASR 开始录音）
                 await self.push_frame(
                     InterruptionFrame(),
                     direction
@@ -152,8 +161,14 @@ class SherpaASRProcessor(FrameProcessor):
 
                 if text:
                     print(f"✓ 识别结果: {text}")
+                    # ✅ 使用 TranscriptionFrame（LLMUserContextAggregator 期望的类型）
                     await self.push_frame(
-                        TextFrame(text=text),
+                        TranscriptionFrame(text=text, user_id="user", timestamp=self._get_timestamp()),
+                        direction
+                    )
+                    # 发送 UserStoppedSpeakingFrame 触发 LLM 处理
+                    await self.push_frame(
+                        UserStoppedSpeakingFrame(),
                         direction
                     )
 
@@ -178,6 +193,11 @@ class SherpaASRProcessor(FrameProcessor):
 
         # 在线程池中执行（避免阻塞事件循环）
         return await asyncio.to_thread(_recognize_sync)
+
+    def _get_timestamp(self):
+        """获取当前时间戳（ISO 8601 格式）"""
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).isoformat()
 
 
 # ==================== React Agent Processor ====================
@@ -316,16 +336,20 @@ class PiperTTSProcessor(FrameProcessor):
                 frame.text
             )
 
-            # ✅ TTS 播放结束，发出官方停止帧
+            # ✅ TTS 播放结束
             self.is_speaking = False
             if was_interrupted:
                 print("⏸️  TTS 已被中断")
                 await self.push_frame(TTSStoppedFrame(), direction)
+            else:
+                print("✓ TTS 播放完成")
+                # ✅ 发送 turn 结束信号，让 Pipeline 准备接收下一次唤醒
+                await self.push_frame(UserStoppedSpeakingFrame(), direction)
 
             # 传递原始文本帧
             await self.push_frame(frame, direction)
         else:
-            # 其他帧直接传递
+            # 其他帧直接传递（不打印，太多了）
             await self.push_frame(frame, direction)
 
     def _synthesize_and_play_sync(self, text) -> bool:

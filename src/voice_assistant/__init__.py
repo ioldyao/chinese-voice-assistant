@@ -15,6 +15,7 @@ from .qwen_llm_service import (
     QwenLLMContext,
     mcp_tools_to_function_schemas,
     create_tools_schema_from_mcp,
+    mcp_tools_to_openai_format,
     register_mcp_functions,
 )
 
@@ -36,5 +37,6 @@ __all__ = [
     "QwenLLMContext",
     "mcp_tools_to_function_schemas",
     "create_tools_schema_from_mcp",
+    "mcp_tools_to_openai_format",
     "register_mcp_functions",
 ]

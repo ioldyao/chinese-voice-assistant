@@ -64,8 +64,11 @@ mcp_tools = await mcp.list_all_tools_async()
 # 转换为 Pipecat FunctionSchema
 tools_schema = create_tools_schema_from_mcp(mcp_tools)
 
+# 转换为 OpenAI API 格式（用于 LLMContext）
+tools = mcp_tools_to_openai_format(mcp_tools)
+
 # 添加到上下文
-context = QwenLLMContext(messages, tools=tools_schema)
+context = QwenLLMContext(messages, tools=tools)
 
 # 注册 MCP 函数处理器（统一处理所有 MCP 工具调用）
 await register_mcp_functions(llm, mcp)
@@ -143,7 +146,7 @@ async def main():
     mcp = MCPManager()
     await mcp.add_server_async("playwright", "npx", ["@playwright/mcp@latest"], 120)
     mcp_tools = await mcp.list_all_tools_async()
-    tools_schema = create_tools_schema_from_mcp(mcp_tools)
+    tools = mcp_tools_to_openai_format(mcp_tools)
 
     # 3. 初始化 Qwen LLM Service（官方）
     llm = QwenLLMService(model="qwen-plus")
@@ -155,7 +158,7 @@ async def main():
     messages = [
         {"role": "system", "content": "你是一个智能助手，可以使用浏览器工具"}
     ]
-    context = QwenLLMContext(messages, tools=tools_schema)
+    context = QwenLLMContext(messages, tools=tools)
     context_aggregator = LLMContextAggregatorPair(context)
 
     # 6. 创建 Processors
@@ -236,7 +239,7 @@ QwenLLMService(
 ```python
 QwenLLMContext(
     messages: list[dict] | None = None,  # 对话历史（OpenAI 格式）
-    tools: ToolsSchema | None = None      # Function Calling 工具
+    tools: list[dict] | None = None       # Function Calling 工具（OpenAI 格式）
 )
 ```
 
@@ -255,6 +258,16 @@ create_tools_schema_from_mcp(
     mcp_tools: list[dict]  # MCP 工具列表
 ) -> ToolsSchema            # Pipecat ToolsSchema 对象
 ```
+
+### mcp_tools_to_openai_format (推荐用于 LLMContext)
+
+```python
+mcp_tools_to_openai_format(
+    mcp_tools: list[dict]  # MCP 工具列表
+) -> list[dict]             # OpenAI API 格式的工具列表
+```
+
+**用途**: 将 MCP 工具转换为 OpenAI API 格式，用于 `QwenLLMContext` 的 `tools` 参数。
 
 ### register_mcp_functions
 

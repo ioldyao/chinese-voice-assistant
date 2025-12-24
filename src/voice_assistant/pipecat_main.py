@@ -23,14 +23,14 @@ from .pipecat_adapters import (
 from .qwen_llm_service import (
     QwenLLMService,
     QwenLLMContext,
-    create_tools_schema_from_mcp,
+    mcp_tools_to_openai_format,
     register_mcp_functions,
 )
 
-# 导入官方 Context Aggregator
-from pipecat.processors.aggregators.llm_response import (
-    LLMUserContextAggregator,
-    LLMAssistantContextAggregator,
+# 导入官方 Context Aggregator（使用 OpenAI 特定实现）
+from pipecat.services.openai.llm import (
+    OpenAIUserContextAggregator,      # ✅ 支持函数调用处理
+    OpenAIAssistantContextAggregator, # ✅ 自动保存 tool_calls + 结果到 context
 )
 
 # 导入现有组件
@@ -220,8 +220,8 @@ async def create_pipecat_pipeline():
     # 注册 MCP 函数处理器
     await register_mcp_functions(llm, mcp)
 
-    # 创建 Tools Schema（用于 LLM Context）
-    tools_schema = create_tools_schema_from_mcp(mcp_tools)
+    # 创建 Tools（OpenAI API 格式，用于 LLM Context）
+    tools = mcp_tools_to_openai_format(mcp_tools)
 
     # 创建对话上下文
     messages = [
@@ -235,21 +235,26 @@ async def create_pipecat_pipeline():
 重要规则：
 1. 每次只执行一个动作
 2. 浏览器操作必须使用 Playwright 工具
-3. 优先使用快捷键和简单操作
-4. 最多 10 步必须完成任务"""
+3. 工具调用成功后，立即用简短的中文回复用户，确认操作已完成
+4. **绝对不要重复调用同一个工具**
+5. 如果工具调用成功，直接告诉用户"好的，已经打开"或类似的确认信息
+6. 不要问用户是否需要其他帮助，简短确认即可"""
         }
     ]
 
-    context = QwenLLMContext(messages, tools=tools_schema)
+    context = QwenLLMContext(messages, tools=tools)
 
-    # 创建 Context Aggregators（分别为 user 和 assistant）
-    user_aggregator = LLMUserContextAggregator(context)
-    assistant_aggregator = LLMAssistantContextAggregator(context)
+    # 创建 User Context Aggregator（添加用户消息到上下文）
+    user_aggregator = OpenAIUserContextAggregator(context)
+
+    # ⚠️ 暂不使用 Assistant Aggregator，因为它会消费 TextFrame 不传递给 TTS
+    # 等 TTS 工作后再优化上下文管理
+    # assistant_aggregator = OpenAIAssistantContextAggregator(context)
 
     print("✓ QwenLLMService 已初始化")
     print("✓ MCP 函数已注册")
-    print("✓ LLMUserContextAggregator 已创建")
-    print("✓ LLMAssistantContextAggregator 已创建")
+    print("✓ OpenAIUserContextAggregator 已创建")
+    # print("✓ OpenAIAssistantContextAggregator 已创建")
 
     # 3. 创建 Pipecat Processors
     print("\n⏳ 正在创建 Pipecat Processors...")
@@ -288,7 +293,7 @@ async def create_pipecat_pipeline():
         screenshot_proc,                # 自定义：截图 → UserImageRawFrame
         qwen_vision_proc,               # 自定义：Vision API → TextFrame
         llm,                            # 官方：Qwen LLM Service（已注册 MCP 函数）✨
-        assistant_aggregator,           # 官方：保存助手响应到上下文 ✨
+        # assistant_aggregator,         # 暂时移除：它会消费 TextFrame 导致 TTS 收不到
         tts_proc,                       # 自定义：Piper TTS
     ])
 
@@ -301,12 +306,12 @@ async def create_pipecat_pipeline():
     print("   官方：  context.user() ✨")
     print("   自定义：Screenshot → Vision")
     print("   官方：  LLM Service + Function Calling ✨")
-    print("   官方：  context.assistant() ✨")
     print("   自定义：Piper TTS")
     print("\n💡 技术亮点:")
     print("   ✅ LLM Service 自动管理对话历史")
     print("   ✅ MCP 工具通过 Function Calling 无缝集成")
     print("   ✅ 保留本地 KWS + ASR + TTS（免费、无网络依赖）")
+    print("   ⚠️  暂未使用 Assistant Aggregator（待优化）")
     print("\n💬 说出唤醒词开始对话...")
     print("   默认唤醒词: 小智、你好助手、智能助手")
     print("   按 Ctrl+C 退出\n")

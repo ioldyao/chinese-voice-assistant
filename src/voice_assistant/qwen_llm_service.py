@@ -79,6 +79,51 @@ def create_tools_schema_from_mcp(mcp_tools: list[dict]) -> ToolsSchema:
     return ToolsSchema(standard_tools=function_schemas)
 
 
+def mcp_tools_to_openai_format(mcp_tools: list[dict]) -> list[dict]:
+    """
+    将 MCP 工具列表转换为 OpenAI API 格式（用于 LLMContext）
+
+    OpenAI API 格式：
+    [
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_navigate",
+                "description": "Navigate to a URL",
+                "parameters": {
+                    "type": "object",
+                    "properties": {...},
+                    "required": [...]
+                }
+            }
+        }
+    ]
+
+    Args:
+        mcp_tools: MCP 工具列表
+
+    Returns:
+        OpenAI API 格式的工具列表
+    """
+    openai_tools = []
+    for tool in mcp_tools:
+        name = tool.get("name", "")
+        description = tool.get("description", "")
+        input_schema = tool.get("input_schema", {})
+
+        openai_tool = {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": input_schema  # MCP input_schema 已经是 JSON Schema 格式
+            }
+        }
+        openai_tools.append(openai_tool)
+
+    return openai_tools
+
+
 async def register_mcp_functions(llm_service: OpenAILLMService, mcp_manager):
     """
     将 MCP 工具注册为 LLM 函数处理器
@@ -104,23 +149,35 @@ async def register_mcp_functions(llm_service: OpenAILLMService, mcp_manager):
 
             if result.success:
                 print(f"✓ 工具执行成功")
-                # 返回结果给 LLM
-                await params.result_callback(result.content)
+
+                # 简化输出：移除冗长的浏览器 console 日志
+                content = str(result.content) if result.content else "操作成功完成"
+
+                # 过滤掉浏览器 console messages（只保留关键信息）
+                if "### New console messages" in content:
+                    # 只保留第一部分（Ran Playwright code + Page state）
+                    parts = content.split("### New console messages")
+                    content = parts[0].strip()
+                    # 添加简短说明
+                    content += "\n\n[浏览器操作成功]"
+
+                # 限制输出长度（最多 500 字符）
+                if len(content) > 500:
+                    content = content[:500] + "..."
+
+                print(f"   结果: {content[:100]}...")
+                await params.result_callback(content)
             else:
                 print(f"✗ 工具执行失败: {result.error}")
-                await params.result_callback({
-                    "error": result.error,
-                    "success": False
-                })
+                error_msg = f"错误: {result.error}"
+                await params.result_callback(error_msg)
 
         except Exception as e:
             print(f"❌ MCP 调用异常: {e}")
             import traceback
             traceback.print_exc()
-            await params.result_callback({
-                "error": str(e),
-                "success": False
-            })
+            error_msg = f"异常: {str(e)}"
+            await params.result_callback(error_msg)
 
     # 注册所有 MCP 工具（使用统一处理器）
     # 使用 None 作为 function_name 表示捕获所有函数调用
