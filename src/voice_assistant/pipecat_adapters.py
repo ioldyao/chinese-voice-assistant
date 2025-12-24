@@ -364,21 +364,20 @@ class PiperTTSProcessor(FrameProcessor):
                 return False
 
 
-# ==================== Vision Processor ====================
+# ==================== Vision Processors (Pipecat 官方模式) ====================
 
-class VisionProcessor(FrameProcessor):
+class ScreenshotProcessor(FrameProcessor):
     """
-    Vision 理解 Processor
+    截图 Processor - 判断并生成 UserImageRawFrame
 
-    判断用户指令是否需要视觉理解，如需要则：
-    1. 截图（异步）
-    2. 调用 Vision API（异步）
-    3. 输出分析结果
+    采用 Pipecat 官方推荐模式：
+    - 判断是否需要视觉理解
+    - 截图并生成 UserImageRawFrame（内存传递，无文件 I/O）
+    - 传递给 QwenVisionProcessor 处理
     """
 
-    def __init__(self, vision_client):
+    def __init__(self):
         super().__init__()
-        self.vision = vision_client  # VisionUnderstanding 实例
         self.vision_keywords = [
             "看", "查看", "讲解", "描述", "显示什么", "显示的",
             "分析", "识别", "内容是", "画面", "截图", "图片"
@@ -388,76 +387,62 @@ class VisionProcessor(FrameProcessor):
             "滚动", "搜索", "执行", "运行", "按"
         ]
 
-    def _needs_vision(self, command: str) -> bool:
-        """判断是否需要 Vision"""
+    def _needs_vision(self, text: str) -> bool:
+        """判断是否需要视觉理解"""
         # 操作关键词优先（React 模式）
-        if any(kw in command for kw in self.operation_keywords):
+        if any(kw in text for kw in self.operation_keywords):
             return False
         # 视觉关键词
-        return any(kw in command for kw in self.vision_keywords)
+        return any(kw in text for kw in self.vision_keywords)
 
-    def _get_foreground_window_rect(self) -> Optional[tuple]:
-        """获取前台窗口坐标（DPI感知）"""
-        try:
-            # 设置 DPI 感知
-            try:
-                ctypes.windll.shcore.SetProcessDpiAwareness(2)
-            except:
-                pass  # 可能已经设置过
+    async def _capture_screenshot_async(self) -> tuple[bytes, tuple[int, int]]:
+        """
+        异步截图，返回 (图片字节, 尺寸)
 
-            # 获取前台窗口句柄
-            hwnd = ctypes.windll.user32.GetForegroundWindow()
-            if not hwnd:
-                return None
+        使用 Pipecat 官方模式：内存传递，无文件 I/O
+        """
+        def capture():
+            from PIL import ImageGrab
+            import io
 
-            # 获取窗口矩形
-            rect = wintypes.RECT()
-            ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-
-            # 修正：去除边框和阴影
-            padding = 8
-            bbox = (
-                rect.left + padding,
-                rect.top,
-                rect.right - padding,
-                rect.bottom - padding
-            )
-
-            return bbox
-
-        except Exception as e:
-            print(f"[Vision] 获取窗口坐标失败: {e}")
-            return None
-
-    def _take_screenshot_sync(self, target: str = "window") -> str:
-        """同步截图逻辑"""
-        # 创建临时文件
-        temp_file = tempfile.NamedTemporaryFile(
-            suffix='.png',
-            delete=False
-        )
-        temp_path = temp_file.name
-        temp_file.close()
-
-        if target == "window":
             # 尝试窗口截图
-            bbox = self._get_foreground_window_rect()
-            if bbox:
-                screenshot = ImageGrab.grab(bbox=bbox)
-            else:
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                # 设置 DPI 感知
+                try:
+                    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+                except:
+                    pass
+
+                # 获取前台窗口
+                hwnd = ctypes.windll.user32.GetForegroundWindow()
+                if hwnd:
+                    rect = wintypes.RECT()
+                    ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+
+                    # 修正边框
+                    padding = 8
+                    bbox = (
+                        rect.left + padding,
+                        rect.top,
+                        rect.right - padding,
+                        rect.bottom - padding
+                    )
+                    screenshot = ImageGrab.grab(bbox=bbox)
+                else:
+                    screenshot = ImageGrab.grab()
+            except Exception:
                 # 降级到全屏
-                print("[Vision] 窗口截图失败，使用全屏模式")
                 screenshot = ImageGrab.grab()
-        else:
-            # 全屏截图
-            screenshot = ImageGrab.grab()
 
-        screenshot.save(temp_path)
-        return temp_path
+            # 转换为字节（内存操作）
+            img_byte_arr = io.BytesIO()
+            screenshot.save(img_byte_arr, format='PNG')
+            return img_byte_arr.getvalue(), screenshot.size
 
-    async def _take_screenshot_async(self) -> str:
-        """异步截图（使用线程池）"""
-        return await asyncio.to_thread(self._take_screenshot_sync)
+        return await asyncio.to_thread(capture)
 
     async def process_frame(self, frame, direction):
         """处理帧"""
@@ -474,33 +459,117 @@ class VisionProcessor(FrameProcessor):
                 print(f"🔍 Vision 模式: {frame.text}")
 
                 try:
-                    # 异步截图
-                    screenshot_path = await self._take_screenshot_async()
+                    # 异步截图（内存操作）
+                    img_bytes, size = await self._capture_screenshot_async()
 
-                    # 异步 Vision API
-                    result = await self.vision.understand_screen_async(
-                        screenshot_path,
-                        question=frame.text
+                    # 创建 UserImageRawFrame（Pipecat 官方 Frame）
+                    from pipecat.frames.frames import UserImageRawFrame
+
+                    vision_frame = UserImageRawFrame(
+                        image=img_bytes,
+                        size=size,
+                        format="PNG"
                     )
 
-                    # 清理临时文件
-                    try:
-                        Path(screenshot_path).unlink()
-                    except:
-                        pass
+                    # 附加用户问题（用于 Vision API）
+                    vision_frame.user_question = frame.text
 
-                    # 输出结果
-                    print(f"📊 Vision 结果: {result[:100]}...")
-                    await self.push_frame(TextFrame(result), direction)
+                    # 推送到 QwenVisionProcessor
+                    await self.push_frame(vision_frame, direction)
                     return
 
                 except Exception as e:
-                    print(f"❌ Vision 处理失败: {e}")
+                    print(f"❌ 截图失败: {e}")
                     import traceback
                     traceback.print_exc()
-                    # 失败时仍传递原始帧给 Agent
+                    # 失败时传递原始帧给 Agent
                     await self.push_frame(frame, direction)
                     return
 
         # 非 Vision 任务，传递给 ReactAgent
+        await self.push_frame(frame, direction)
+
+
+class QwenVisionProcessor(FrameProcessor):
+    """
+    Qwen Vision API Processor - 处理 UserImageRawFrame
+
+    采用 Pipecat 官方推荐模式：
+    - 接收 UserImageRawFrame（官方 Frame 类型）
+    - 调用 Qwen-VL-Max API（完全异步）
+    - 返回 TextFrame（结果）
+    """
+
+    def __init__(self, api_url: str, api_key: str):
+        super().__init__()
+        self.api_url = api_url
+        self.api_key = api_key
+
+    async def _call_vision_api(self, img_bytes: bytes, question: str) -> str:
+        """调用 Qwen-VL-Max API（异步）"""
+        import httpx
+        import base64
+
+        img_base64 = base64.b64encode(img_bytes).decode()
+
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                response = await client.post(
+                    f"{self.api_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": "qwen-vl-max",
+                        "messages": [{
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": question},
+                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}}
+                            ]
+                        }],
+                        "max_tokens": 2000,
+                        "temperature": 0.7
+                    }
+                )
+
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
+            else:
+                return f"API错误 {response.status_code}: {response.text[:100]}"
+
+        except Exception as e:
+            return f"Vision API 调用失败: {str(e)}"
+
+    async def process_frame(self, frame, direction):
+        """处理帧"""
+        await super().process_frame(frame, direction)
+
+        # 响应中断
+        if isinstance(frame, InterruptionFrame):
+            await self.push_frame(frame, direction)
+            return
+
+        # 处理 UserImageRawFrame（Pipecat 官方 Frame）
+        from pipecat.frames.frames import UserImageRawFrame
+
+        if isinstance(frame, UserImageRawFrame):
+            # 提取问题
+            question = getattr(frame, 'user_question', "屏幕上有什么内容？")
+
+            print(f"📸 调用 Vision API...")
+
+            # 异步调用 API
+            result = await self._call_vision_api(frame.image, question)
+
+            # 输出结果
+            print(f"📊 Vision 结果: {result[:100]}...")
+
+            # 推送结果（TextFrame）
+            await self.push_frame(TextFrame(result), direction)
+            return
+
+        # 其他帧类型，直接传递
         await self.push_frame(frame, direction)

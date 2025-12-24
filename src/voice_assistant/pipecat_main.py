@@ -16,7 +16,8 @@ from .pipecat_adapters import (
     SherpaASRProcessor,
     ReactAgentProcessor,
     PiperTTSProcessor,
-    VisionProcessor,
+    ScreenshotProcessor,
+    QwenVisionProcessor,
 )
 
 # 导入现有组件
@@ -195,7 +196,14 @@ async def create_pipecat_pipeline():
 
     kws_proc = SherpaKWSProcessor(wake_system.kws_model)
     asr_proc = SherpaASRProcessor(wake_system.asr_model)
-    vision_proc = VisionProcessor(wake_system.agent.vision)  # 视觉理解（异步）
+
+    # Vision Processors（采用 Pipecat 官方模式）
+    screenshot_proc = ScreenshotProcessor()  # 截图 → UserImageRawFrame
+    qwen_vision_proc = QwenVisionProcessor(
+        api_url=wake_system.agent.api_url,
+        api_key=wake_system.agent.api_key
+    )  # 处理 UserImageRawFrame → TextFrame
+
     agent_proc = ReactAgentProcessor(wake_system.agent)  # 基于官方推荐模式：直接异步调用
 
     # 创建音频传输（在创建 TTS Processor 之前）
@@ -208,7 +216,8 @@ async def create_pipecat_pipeline():
 
     print("✓ KWS Processor 已创建")
     print("✓ ASR Processor 已创建")
-    print("✓ Vision Processor 已创建")
+    print("✓ Screenshot Processor 已创建（Pipecat 官方模式）")
+    print("✓ Qwen Vision Processor 已创建（Pipecat 官方模式）")
     print("✓ React Agent Processor 已创建")
     print("✓ TTS Processor 已创建")
 
@@ -218,7 +227,8 @@ async def create_pipecat_pipeline():
     pipeline = Pipeline([
         kws_proc,
         asr_proc,
-        vision_proc,  # Vision 理解（判断路由）
+        screenshot_proc,     # 判断 + 截图 → UserImageRawFrame（Pipecat 官方）
+        qwen_vision_proc,    # Vision API → TextFrame（Pipecat 官方）
         agent_proc,
         tts_proc,
     ])
@@ -227,6 +237,10 @@ async def create_pipecat_pipeline():
     print("\n" + "="*60)
     print("✓ Pipecat 模式启动完成！")
     print("="*60)
+    print("\n📋 Pipeline 结构（完全采用 Pipecat 官方模式）:")
+    print("   麦克风 → KWS → ASR → Screenshot → QwenVision → Agent → TTS → 扬声器")
+    print("                           ↓                ↓")
+    print("                   UserImageRawFrame    TextFrame")
     print("\n💬 说出唤醒词开始对话...")
     print("   默认唤醒词: 小智、你好助手、智能助手")
     print("   按 Ctrl+C 退出\n")
