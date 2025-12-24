@@ -292,11 +292,12 @@ class ReactAgentProcessor(FrameProcessor):
 
 class PiperTTSProcessor(FrameProcessor):
     """
-    Piper TTS 适配器
+    Piper TTS 适配器 - 支持文本聚合
 
     将现有的 TTSManagerStreaming 封装为 Pipecat Processor
     接收文本帧，生成音频帧并直接播放
     响应官方 InterruptionFrame，发出 TTSStoppedFrame
+    聚合流式文本，完整播放
     """
 
     def __init__(self, tts_manager, transport=None):
@@ -305,6 +306,10 @@ class PiperTTSProcessor(FrameProcessor):
         self.transport = transport  # 用于直接播放音频
         self.interrupt_flag = False  # 中断标志
         self.is_speaking = False  # TTS 播放状态
+
+        # ✅ 文本聚合缓冲区
+        self.text_buffer = []
+        self.is_buffering = False
 
     def interrupt(self):
         """中断当前TTS播放"""
@@ -319,37 +324,81 @@ class PiperTTSProcessor(FrameProcessor):
             if self.is_speaking:
                 print("⏸️  检测到中断信号，停止TTS播放")
                 self.interrupt()
+            # 清空缓冲区
+            self.text_buffer = []
+            self.is_buffering = False
             # 传递中断帧
             await self.push_frame(frame, direction)
             return
 
+        # ✅ 检测 LLM 响应开始（开始缓冲）
+        from pipecat.frames.frames import LLMFullResponseStartFrame
+        if isinstance(frame, LLMFullResponseStartFrame):
+            self.text_buffer = []
+            self.is_buffering = True
+            await self.push_frame(frame, direction)
+            return
+
+        # ✅ 检测 LLM 响应结束（播放缓冲内容）
+        from pipecat.frames.frames import LLMFullResponseEndFrame
+        if isinstance(frame, LLMFullResponseEndFrame):
+            self.is_buffering = False
+            if self.text_buffer:
+                # 聚合所有文本
+                full_text = "".join(self.text_buffer)
+                print(f"🔊 TTS 合成（完整）: {full_text[:50]}...")
+
+                # 播放完整文本
+                self.interrupt_flag = False
+                self.is_speaking = True
+
+                was_interrupted = await asyncio.to_thread(
+                    self._synthesize_and_play_sync,
+                    full_text
+                )
+
+                self.is_speaking = False
+                if was_interrupted:
+                    print("⏸️  TTS 已被中断")
+                    await self.push_frame(TTSStoppedFrame(), direction)
+                else:
+                    print("✓ TTS 播放完成")
+                    # ✅ 发送 turn 结束信号
+                    await self.push_frame(UserStoppedSpeakingFrame(), direction)
+
+                self.text_buffer = []
+
+            await self.push_frame(frame, direction)
+            return
+
+        # ✅ 缓冲文本帧（流式输出）
         if isinstance(frame, TextFrame):
-            print(f"🔊 TTS 合成: {frame.text}")
-
-            # 重置中断标志，标记为播放中
-            self.interrupt_flag = False
-            self.is_speaking = True
-
-            # 在线程池中生成和播放音频
-            was_interrupted = await asyncio.to_thread(
-                self._synthesize_and_play_sync,
-                frame.text
-            )
-
-            # ✅ TTS 播放结束
-            self.is_speaking = False
-            if was_interrupted:
-                print("⏸️  TTS 已被中断")
-                await self.push_frame(TTSStoppedFrame(), direction)
+            if self.is_buffering:
+                # 缓冲模式：收集文本，不播放
+                self.text_buffer.append(frame.text)
             else:
-                print("✓ TTS 播放完成")
-                # ✅ 发送 turn 结束信号，让 Pipeline 准备接收下一次唤醒
-                await self.push_frame(UserStoppedSpeakingFrame(), direction)
+                # 非缓冲模式（兼容非流式输出）：直接播放
+                print(f"🔊 TTS 合成: {frame.text}")
+                self.interrupt_flag = False
+                self.is_speaking = True
+
+                was_interrupted = await asyncio.to_thread(
+                    self._synthesize_and_play_sync,
+                    frame.text
+                )
+
+                self.is_speaking = False
+                if was_interrupted:
+                    print("⏸️  TTS 已被中断")
+                    await self.push_frame(TTSStoppedFrame(), direction)
+                else:
+                    print("✓ TTS 播放完成")
+                    await self.push_frame(UserStoppedSpeakingFrame(), direction)
 
             # 传递原始文本帧
             await self.push_frame(frame, direction)
         else:
-            # 其他帧直接传递（不打印，太多了）
+            # 其他帧直接传递
             await self.push_frame(frame, direction)
 
     def _synthesize_and_play_sync(self, text) -> bool:
@@ -477,10 +526,16 @@ class ScreenshotProcessor(FrameProcessor):
             await self.push_frame(frame, direction)
             return
 
-        # 处理文本命令
+        # ✅ 处理文本命令（支持 TextFrame 和 TranscriptionFrame）
+        text_content = None
         if isinstance(frame, TextFrame):
-            if self._needs_vision(frame.text):
-                print(f"🔍 Vision 模式: {frame.text}")
+            text_content = frame.text
+        elif isinstance(frame, TranscriptionFrame):
+            text_content = frame.text
+
+        if text_content:
+            if self._needs_vision(text_content):
+                print(f"🔍 Vision 模式: {text_content}")
 
                 try:
                     # 异步截图（内存操作）
@@ -496,7 +551,7 @@ class ScreenshotProcessor(FrameProcessor):
                     )
 
                     # 附加用户问题（用于 Vision API）
-                    vision_frame.user_question = frame.text
+                    vision_frame.user_question = text_content
 
                     # 推送到 QwenVisionProcessor
                     await self.push_frame(vision_frame, direction)
@@ -510,7 +565,7 @@ class ScreenshotProcessor(FrameProcessor):
                     await self.push_frame(frame, direction)
                     return
 
-        # 非 Vision 任务，传递给 ReactAgent
+        # 非 Vision 任务，传递给下游
         await self.push_frame(frame, direction)
 
 
