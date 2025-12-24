@@ -2,13 +2,13 @@
 
 <div align="center">
 
-**双阶段语音识别 + React智能代理 + Playwright浏览器控制 + Pipecat实时音频处理**
+**双阶段语音识别 + Pipecat 官方 LLM + Playwright 浏览器控制 + 实时音频处理**
 
-基于 Sherpa-ONNX + Qwen + Playwright MCP + Piper + Pipecat 的中文语音助手
+基于 Sherpa-ONNX + Qwen LLM Service + Playwright MCP + Piper + Pipecat 的中文语音助手
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.0.0-green.svg)](https://github.com/yourusername/chinese-voice-assistant)
+[![Version](https://img.shields.io/badge/version-2.1.0-green.svg)](https://github.com/yourusername/chinese-voice-assistant)
 
 </div>
 
@@ -20,9 +20,10 @@
   - **阶段2 - ASR**: 唤醒后启动完整语音识别（120MB），准确率高
   - 支持自定义唤醒词（默认：小智、你好助手、智能助手）
 
-- **🧠 React Agent**: 多轮推理决策框架
-  - 自动规划执行步骤
-  - **完全异步执行**（基于 Pipecat 框架）
+- **🧠 Qwen LLM Service**: 基于 Pipecat 官方框架
+  - **完全异步执行**（继承 OpenAILLMService）
+  - **自动管理对话历史**（LLMContextAggregator）
+  - **Function Calling**（MCP 工具无缝集成）
   - 基于 MCP Python SDK 官方推荐模式
 
 - **🎭 Playwright MCP**: 浏览器自动化操作
@@ -38,20 +39,31 @@
 - **👁️ 视觉理解**: Qwen-VL-Max 多模态理解
   - 屏幕内容分析
   - 支持窗口/全屏截图
+  - **完全异步化**（httpx + aiofiles）
 
-- **💾 长期记忆**: 5分钟时间窗口的跨会话记忆持久化
-
-### 🎨 技术亮点（Pipecat 架构）
-- ⚡ **完全异步架构** - 基于 Pipecat 实时音频框架
-- 🎯 **官方推荐模式** - 符合 MCP Python SDK 最佳实践
-- 🔄 **Pipeline 流式处理** - KWS → ASR → Vision → Agent → TTS 流水线
-- 🚀 **零线程开销** - 纯异步，无 `run_coroutine_threadsafe`
-- 🛡️ **非阻塞执行** - Agent 后台运行，不阻塞音频处理
+### 🎨 技术亮点（混合架构）
+- ⚡ **官方 LLM Service** - QwenLLMService（继承 OpenAILLMService）✨
+- 🎯 **自动对话管理** - LLMContextAggregator（官方框架）✨
+- 🔄 **Function Calling** - MCP 工具无缝集成（官方机制）✨
+- 🚀 **保留自定义优势** - KWS + ASR + Piper TTS（本地、免费）
+- 🛡️ **完全异步架构** - 纯异步，无线程开销
 - 👁️ **Vision 异步集成** - 视觉理解完全异步化
 - ⏸️ **标准中断机制** - 使用 Pipecat 官方 `InterruptionFrame`
   - ✅ 生态兼容：可与官方 TTS/LLM Processor 配合
   - ✅ 统一协调：`allow_interruptions` 全局管理
   - ✅ 事件明确：`TTSStoppedFrame` 通知停止状态
+
+### 🏗️ 混合架构优势
+**保留自定义（官方不支持）**：
+- ✅ KWS 唤醒词检测（Sherpa-ONNX，本地）
+- ✅ ASR 语音识别（Sherpa-ONNX，本地）
+- ✅ Piper TTS（本地，超低延迟）
+- ✅ Qwen Vision（保持现有 API）
+
+**改用官方（享受生态）**：
+- ✨ LLM Service（QwenLLMService）
+- ✨ Context Aggregator（自动管理历史）
+- ✨ Function Calling（MCP 工具集成）
 
 ---
 
@@ -179,19 +191,23 @@ python main.py
 ```
 chinese-voice-assistant/
 ├── src/voice_assistant/      # 核心源代码
-│   ├── __init__.py           # 模块导出 (30行)
+│   ├── __init__.py           # 模块导出 (40行)
 │   ├── config.py             # 配置管理 (40行)
 │   ├── wake_word.py          # 模型加载器 (95行)
 │   ├── react_agent.py        # React 智能代理 (603行)
 │   │                         # - 完全异步执行（Pipecat 模式）
 │   ├── mcp_client.py         # MCP 客户端 (378行)
 │   │                         # - MCPManager (异步，多Server管理)
-│   ├── pipecat_main.py       # Pipecat 主程序 (323行)
+│   ├── qwen_llm_service.py   # Qwen LLM Service (209行)
+│   │                         # - QwenLLMService（官方框架）
+│   │                         # - MCP Tools 转换器
+│   │                         # - Function Calling 注册
+│   ├── pipecat_main.py       # Pipecat 主程序 (427行)
 │   ├── pipecat_adapters.py   # Pipecat Processors (507行)
 │   │                         # - SherpaKWSProcessor (KWS)
 │   │                         # - SherpaASRProcessor (ASR)
-│   │                         # - VisionProcessor (Vision 路由)
-│   │                         # - ReactAgentProcessor (Agent)
+│   │                         # - ScreenshotProcessor (截图)
+│   │                         # - QwenVisionProcessor (Vision)
 │   │                         # - PiperTTSProcessor (TTS)
 │   ├── tts.py                # TTS 语音合成 (372行)
 │   └── vision.py             # 视觉理解 (136行)
@@ -212,7 +228,7 @@ chinese-voice-assistant/
 │   └── sherpa-onnx-paraformer-zh/ # ASR 模型 (120MB)
 │
 ├── main.py                   # 主程序入口 (26行)
-├── pyproject.toml            # 项目配置 (v2.0.0)
+├── pyproject.toml            # 项目配置 (v2.1.0)
 └── README.md                 # 项目文档
 ```
 
@@ -220,15 +236,17 @@ chinese-voice-assistant/
 | 模块 | 代码行数 | 主要功能 |
 |-----|---------|---------|
 | `react_agent.py` | 603 | React 推理框架（完全异步） |
-| `pipecat_adapters.py` | 507 | Pipecat Processors（含 VisionProcessor） |
+| `pipecat_adapters.py` | 507 | Pipecat Processors（KWS/ASR/Vision/TTS） |
+| `pipecat_main.py` | 427 | Pipecat Pipeline 配置（混合架构） |
 | `mcp_client.py` | 378 | MCP 客户端（异步多 Server） |
 | `tts.py` | 372 | TTS 引擎管理（Piper/RealtimeTTS） |
-| `pipecat_main.py` | 323 | Pipecat Pipeline 配置 |
+| `qwen_llm_service.py` | 209 | Qwen LLM Service（官方框架集成） |
 | `vision.py` | 136 | Qwen-VL-Max 视觉理解（异步） |
 | `wake_word.py` | 95 | 模型加载器（KWS + ASR） |
 | `config.py` | 40 | 全局配置 |
+| `__init__.py` | 40 | 模块导出 |
 | `main.py` | 26 | Pipecat 单一入口 |
-| **总计** | **~2,480** | **Pipecat 完整实现** |
+| **总计** | **~2,833** | **混合架构完整实现** |
 
 ---
 
@@ -248,59 +266,77 @@ ruff check src/
 
 ### 架构说明
 
-#### **Pipecat 架构**
+#### **Pipecat 混合架构**
 ```
 Pipeline:
   SimplePyAudioTransport (音频I/O)
     ↓
-  SherpaKWSProcessor (唤醒词检测)
+  SherpaKWSProcessor (唤醒词检测 - 自定义)
     ↓
-  SherpaASRProcessor (语音识别)
+  SherpaASRProcessor (语音识别 - 自定义)
     ↓
-  VisionProcessor (视觉理解路由)
+  LLMUserContextAggregator (添加用户消息 - 官方 ✨)
     ↓
-  ReactAgentProcessor (智能代理，后台执行)
+  ScreenshotProcessor (截图 - 自定义)
     ↓
-  PiperTTSProcessor (语音合成，支持中断)
+  QwenVisionProcessor (视觉理解 - 自定义)
+    ↓
+  QwenLLMService (LLM + Function Calling - 官方 ✨)
+    ↓
+  LLMAssistantContextAggregator (保存助手响应 - 官方 ✨)
+    ↓
+  PiperTTSProcessor (语音合成 - 自定义)
     ↓
   SimplePyAudioTransport (音频输出)
 ```
 
 ### 核心改进
 
-#### **1. 完全异步架构**
+#### **1. 混合架构设计**
 ```python
-# React Agent 异步支持
-async def execute_command_async(self, command: str) -> Dict:
-    return await self._react_mode_async(command)
+# 保留自定义（官方不支持）
+- KWS 唤醒词检测（Sherpa-ONNX）
+- ASR 本地识别（Sherpa-ONNX）
+- Piper TTS（本地、免费）
+- Qwen Vision（保持现有 API）
 
-async def _execute_action_async(self, action: str, action_input: Dict):
-    # 直接使用官方 SDK 方法
-    result = await self.mcp.call_tool_async(action, action_input)
+# 改用官方（享受生态）
+- QwenLLMService（继承 OpenAILLMService）
+- LLMContextAggregator（自动管理历史）
+- Function Calling（MCP 工具无缝集成）
 ```
 
-#### **2. ReactAgentProcessor 简化**
-- **之前**: 185 行（线程 + 包装器 + `run_coroutine_threadsafe`）
-- **现在**: 82 行（纯异步，-55% 代码）
-
+#### **2. QwenLLMService 集成**
 ```python
-class ReactAgentProcessor(FrameProcessor):
-    async def _execute_and_push_result(self, command: str, direction):
-        # 直接异步调用，无需线程！
-        result = await self.agent.execute_command_async(command)
+# 初始化 Qwen LLM Service（完全兼容 OpenAI API）
+llm = QwenLLMService(model="qwen-plus")
+
+# 注册 MCP 函数处理器（统一调用所有 MCP 工具）
+await register_mcp_functions(llm, mcp)
+
+# 创建对话上下文（自动管理历史）
+context = QwenLLMContext(messages, tools=tools_schema)
+user_aggregator = LLMUserContextAggregator(context)
+assistant_aggregator = LLMAssistantContextAggregator(context)
 ```
 
-#### **3. 符合 MCP 官方推荐**
+#### **3. 符合 Pipecat 官方最佳实践**
 ```python
-# mcp_client.py:122 - 底层使用官方 SDK
-result = await self.session.call_tool(tool_name, args)  # ✅ 官方方法
+# Pipeline 自动处理对话流程
+Pipeline([
+    ...,
+    user_aggregator,      # 官方：自动添加用户消息
+    llm,                  # 官方：LLM + Function Calling
+    assistant_aggregator, # 官方：自动保存助手响应
+    ...,
+])
 ```
 
 ### 添加新功能
 1. **添加新的 Pipecat Processor**: 在 `pipecat_adapters.py` 中继承 `FrameProcessor`
-2. **添加新的 MCP 工具**: 工具会自动路由到正确的 Server
+2. **添加新的 MCP 工具**: 工具会自动通过 Function Calling 集成到 LLM
 3. **添加新的唤醒词**: 编辑 `config/keywords.txt`
-4. **扩展 React Agent**: 在 `react_agent.py` 中添加新的推理逻辑
+4. **扩展 LLM Service**: 参考 `qwen_llm_service.py` 添加自定义功能
 
 ---
 
@@ -317,9 +353,9 @@ result = await self.session.call_tool(tool_name, args)  # ✅ 官方方法
 | 流式 TTS | RealtimeTTS | 实时流式播放 |
 | 混合 TTS | MeloTTS | 中英文支持 |
 | **智能决策** | | |
-| 推理框架 | React Agent | 多轮思考+行动 |
+| LLM 框架 | Pipecat LLM Service | 官方框架 + 自动历史管理 |
 | LLM 模型 | Qwen-Plus | 意图理解+规划 |
-| 长期记忆 | JSON 持久化 | 5分钟时间窗口 |
+| Function Calling | MCP Protocol | 工具无缝集成 |
 | **浏览器控制** | | |
 | MCP 框架 | Model Context Protocol | 官方 Python SDK v1.25.0 |
 | 浏览器自动化 | Playwright MCP | 跨浏览器支持 |
@@ -385,6 +421,46 @@ A:
 ---
 
 ## 🔥 最近更新
+
+### v2.1.0 - Pipecat 官方 LLM Service 集成（2025-12）
+
+#### ✨ 新增特性
+1. **QwenLLMService 官方框架集成** - 享受 Pipecat 生态
+   - 继承 `OpenAILLMService`，完全兼容 Qwen API
+   - 自动管理对话历史（`LLMContextAggregator`）
+   - 原生 Function Calling 支持（MCP 工具无缝集成）
+   - 新增 `qwen_llm_service.py`（209 行）
+
+2. **混合架构设计** - 自定义 + 官方最佳实践
+   - **保留自定义**: KWS、ASR、Piper TTS、Qwen Vision（官方不支持）
+   - **改用官方**: LLM Service、Context Aggregator、Function Calling
+   - Pipeline 重构：`user_aggregator` → `llm` → `assistant_aggregator`
+   - 代码增加 12%（~2480 → ~2833 行，主要是 LLM Service）
+
+3. **MCP 工具转换器** - 自动集成到 LLM
+   - `mcp_tools_to_function_schemas()` - 转换 MCP 工具为 FunctionSchema
+   - `create_tools_schema_from_mcp()` - 创建 ToolsSchema
+   - `register_mcp_functions()` - 统一注册 MCP 函数处理器
+   - LLM 自动决定何时调用工具，无需手动 React 循环
+
+4. **完整集成指南** - 开箱即用
+   - 新增 `docs/qwen_llm_service_guide.md`（309 行）
+   - 快速开始、MCP 集成、完整示例、API 参考
+   - 架构对比、常见问题解答
+
+#### 📊 性能提升
+- 对话历史自动管理，无需手动维护
+- Function Calling 原生支持，调用效率更高
+- 代码简化，易于维护和扩展
+
+#### 🔧 技术改进
+- ✅ 符合 Pipecat 官方最佳实践（LLM Service + Context Aggregator）
+- ✅ 完全兼容 OpenAI API 格式（Qwen DashScope）
+- ✅ 保留所有自定义优势（本地 KWS/ASR/TTS）
+- ✅ 生态兼容，可与其他官方 Processor 配合
+- ✅ 混合架构，最佳平衡点
+
+---
 
 ### v2.0.0 - Pipecat 单一模式迁移（2025-12）
 
