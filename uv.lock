@@ -5120,7 +5120,9 @@ name = "voice-assistant"
 version = "2.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiofiles" },
     { name = "dashscope" },
+    { name = "httpx" },
     { name = "mcp" },
     { name = "numpy" },
     { name = "pillow" },
@@ -5143,8 +5145,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiofiles", specifier = ">=24.1.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "dashscope", specifier = ">=1.25.4" },
+    { name = "httpx", specifier = ">=0.27.0" },
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "pillow", specifier = ">=11.3.0" },
