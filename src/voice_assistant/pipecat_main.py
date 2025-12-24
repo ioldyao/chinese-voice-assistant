@@ -208,6 +208,13 @@ async def create_pipecat_pipeline():
         ]
         if playwright_tools:
             print(f"  ✓ Playwright-MCP: {len(playwright_tools)} 个工具")
+
+            # 重点打印 browser_snapshot 和 browser_click
+            for tool in playwright_tools:
+                if 'snapshot' in tool['name'] or 'click' in tool['name']:
+                    print(f"\n    📌 {tool['name']}:")
+                    print(f"       描述: {tool.get('description', 'N/A')}")
+                    print(f"       参数: {list(tool.get('input_schema', {}).get('properties', {}).keys())}")
     else:
         print(f"\n❌ 所有 MCP Server 启动失败\n")
         raise RuntimeError("MCP Server 启动失败")
@@ -223,38 +230,62 @@ async def create_pipecat_pipeline():
     # 创建 Tools（OpenAI API 格式，用于 LLM Context）
     tools = mcp_tools_to_openai_format(mcp_tools)
 
+    print(f"\n🔧 转换为 OpenAI 格式后: {len(tools)} 个工具")
+    for tool in tools[:5]:  # 只打印前5个
+        print(f"  - {tool['function']['name']}: {tool['function']['description'][:60]}...")
+
     # 创建对话上下文
     messages = [
         {
             "role": "system",
-            "content": """你是一个智能语音助手，可以使用浏览器工具帮助用户。
+            "content": """你是一个智能语音助手，可以使用浏览器工具和视觉理解能力帮助用户。
 
 可用工具：
-- Playwright 浏览器操作（导航、点击、输入等）
+- Playwright 浏览器操作（导航、点击、输入、滚动等）
+
+能力：
+- 视觉理解：可以看到并描述屏幕内容
 
 重要规则：
-1. 每次只执行一个动作
-2. 浏览器操作必须使用 Playwright 工具
-3. 工具调用成功后，立即用简短的中文回复用户，确认操作已完成
-4. **绝对不要重复调用同一个工具**
-5. 如果工具调用成功，直接告诉用户"好的，已经打开"或类似的确认信息
-6. 不要问用户是否需要其他帮助，简短确认即可"""
+1. **操作场景**（用户要求"打开"、"点击"、"输入"等）：
+   - **点击元素前必须先调用 browser_snapshot 获取最新页面快照**
+   - 使用快照中的 ref 编号进行点击操作
+   - 如果点击失败（ref not found），立即重新调用 browser_snapshot 获取新快照
+   - 工具调用成功后，用简短的中文确认（如"好的，已经点击"）
+   - 不要重复调用同一个工具
+
+2. **视觉理解场景**（用户要求"查看"、"看"、"描述"等）：
+   - 如果收到 `[视觉观察]` 开头的消息，说明系统已经完成截图和视觉分析
+   - 用自然、简洁的语言向用户描述屏幕内容
+   - 突出关键信息，准确描述画面内容
+
+3. **执行流程示例**：
+   用户："点击动态按钮"
+   → 步骤1：调用 browser_snapshot（获取页面元素和ref）
+   → 步骤2：调用 browser_click（使用快照中的ref点击）
+   → 步骤3：回复"好的，已经点击"
+
+4. 不要主动询问用户是否需要其他帮助"""
         }
     ]
 
     context = QwenLLMContext(messages, tools=tools)
 
+    print(f"\n📋 LLMContext 中的 tools: {len(context.tools) if context.tools else 0} 个")
+    if context.tools:
+        for tool in context.tools[:3]:  # 打印前3个
+            print(f"  - {tool['function']['name']}")
+
     # 创建 User Context Aggregator（添加用户消息到上下文）
     user_aggregator = OpenAIUserContextAggregator(context)
 
-    # ⚠️ 暂不使用 Assistant Aggregator，因为它会消费 TextFrame 不传递给 TTS
-    # 等 TTS 工作后再优化上下文管理
-    # assistant_aggregator = OpenAIAssistantContextAggregator(context)
+    # ✅ 创建 Assistant Context Aggregator（保存工具调用历史）
+    assistant_aggregator = OpenAIAssistantContextAggregator(context)
 
     print("✓ QwenLLMService 已初始化")
     print("✓ MCP 函数已注册")
     print("✓ OpenAIUserContextAggregator 已创建")
-    # print("✓ OpenAIAssistantContextAggregator 已创建")
+    print("✓ OpenAIAssistantContextAggregator 已创建")
 
     # 3. 创建 Pipecat Processors
     print("\n⏳ 正在创建 Pipecat Processors...")
@@ -289,12 +320,12 @@ async def create_pipecat_pipeline():
     pipeline = Pipeline([
         kws_proc,                       # 自定义：KWS 唤醒词检测
         asr_proc,                       # 自定义：ASR 本地识别
+        screenshot_proc,                # ✅ 在 user_aggregator 之前判断 Vision
+        qwen_vision_proc,               # ✅ 处理 Vision 请求
         user_aggregator,                # 官方：添加用户消息到上下文 ✨
-        screenshot_proc,                # 自定义：截图 → UserImageRawFrame
-        qwen_vision_proc,               # 自定义：Vision API → TextFrame
         llm,                            # 官方：Qwen LLM Service（已注册 MCP 函数）✨
-        # assistant_aggregator,         # 暂时移除：它会消费 TextFrame 导致 TTS 收不到
-        tts_proc,                       # 自定义：Piper TTS
+        tts_proc,                       # ✅ 先处理 TTS（在 assistant_aggregator 之前）
+        assistant_aggregator,           # ✅ 再保存到 context（工具调用历史）
     ])
 
     print("✓ Pipeline 已构建")
@@ -302,16 +333,17 @@ async def create_pipecat_pipeline():
     print("✓ Pipecat 混合架构启动完成！")
     print("="*60)
     print("\n📋 Pipeline 结构（混合架构）:")
-    print("   自定义：KWS → ASR")
+    print("   自定义：KWS → ASR → Screenshot → Vision ✨")
     print("   官方：  context.user() ✨")
-    print("   自定义：Screenshot → Vision")
     print("   官方：  LLM Service + Function Calling ✨")
-    print("   自定义：Piper TTS")
+    print("   自定义：Piper TTS（先播放）")
+    print("   官方：  context.assistant()（再保存历史）✨")
     print("\n💡 技术亮点:")
     print("   ✅ LLM Service 自动管理对话历史")
     print("   ✅ MCP 工具通过 Function Calling 无缝集成")
     print("   ✅ 保留本地 KWS + ASR + TTS（免费、无网络依赖）")
-    print("   ⚠️  暂未使用 Assistant Aggregator（待优化）")
+    print("   ✅ Assistant Aggregator 保存工具调用历史")
+    print("   ✅ TTS 在 aggregator 之前处理，保证语音输出")
     print("\n💬 说出唤醒词开始对话...")
     print("   默认唤醒词: 小智、你好助手、智能助手")
     print("   按 Ctrl+C 退出\n")

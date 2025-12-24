@@ -150,20 +150,14 @@ async def register_mcp_functions(llm_service: OpenAILLMService, mcp_manager):
             if result.success:
                 print(f"✓ 工具执行成功")
 
-                # 简化输出：移除冗长的浏览器 console 日志
+                # 获取完整内容（不截断）
                 content = str(result.content) if result.content else "操作成功完成"
 
                 # 过滤掉浏览器 console messages（只保留关键信息）
                 if "### New console messages" in content:
-                    # 只保留第一部分（Ran Playwright code + Page state）
                     parts = content.split("### New console messages")
                     content = parts[0].strip()
-                    # 添加简短说明
                     content += "\n\n[浏览器操作成功]"
-
-                # 限制输出长度（最多 500 字符）
-                if len(content) > 500:
-                    content = content[:500] + "..."
 
                 print(f"   结果: {content[:100]}...")
                 await params.result_callback(content)

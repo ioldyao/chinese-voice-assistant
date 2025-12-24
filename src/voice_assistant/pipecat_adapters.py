@@ -9,7 +9,7 @@ from typing import Optional
 from dataclasses import dataclass
 from PIL import ImageGrab
 
-from pipecat.processors.frame_processor import FrameProcessor
+from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.frames.frames import (
     Frame,
     AudioRawFrame,
@@ -292,12 +292,11 @@ class ReactAgentProcessor(FrameProcessor):
 
 class PiperTTSProcessor(FrameProcessor):
     """
-    Piper TTS 适配器 - 支持文本聚合
+    Piper TTS 适配器 - 句子级流式播放
 
     将现有的 TTSManagerStreaming 封装为 Pipecat Processor
-    接收文本帧，生成音频帧并直接播放
+    接收文本帧，按句子缓冲并流式播放
     响应官方 InterruptionFrame，发出 TTSStoppedFrame
-    聚合流式文本，完整播放
     """
 
     def __init__(self, tts_manager, transport=None):
@@ -307,9 +306,9 @@ class PiperTTSProcessor(FrameProcessor):
         self.interrupt_flag = False  # 中断标志
         self.is_speaking = False  # TTS 播放状态
 
-        # ✅ 文本聚合缓冲区
-        self.text_buffer = []
-        self.is_buffering = False
+        # ✅ 句子缓冲区（按句子流式播放）
+        self.sentence_buffer = ""
+        self.sentence_delimiters = ["。", "！", "？", ".", "!", "?", "\n"]
 
     def interrupt(self):
         """中断当前TTS播放"""
@@ -325,81 +324,67 @@ class PiperTTSProcessor(FrameProcessor):
                 print("⏸️  检测到中断信号，停止TTS播放")
                 self.interrupt()
             # 清空缓冲区
-            self.text_buffer = []
-            self.is_buffering = False
+            self.sentence_buffer = ""
             # 传递中断帧
             await self.push_frame(frame, direction)
             return
 
-        # ✅ 检测 LLM 响应开始（开始缓冲）
-        from pipecat.frames.frames import LLMFullResponseStartFrame
-        if isinstance(frame, LLMFullResponseStartFrame):
-            self.text_buffer = []
-            self.is_buffering = True
-            await self.push_frame(frame, direction)
-            return
-
-        # ✅ 检测 LLM 响应结束（播放缓冲内容）
+        # ✅ 检测 LLM 响应结束（播放剩余缓冲）
         from pipecat.frames.frames import LLMFullResponseEndFrame
         if isinstance(frame, LLMFullResponseEndFrame):
-            self.is_buffering = False
-            if self.text_buffer:
-                # 聚合所有文本
-                full_text = "".join(self.text_buffer)
-                print(f"🔊 TTS 合成（完整）: {full_text[:50]}...")
+            # 播放剩余的不完整句子
+            if self.sentence_buffer.strip():
+                print(f"🔊 TTS 合成（剩余）: {self.sentence_buffer}")
+                await self._synthesize_and_play(self.sentence_buffer)
+                self.sentence_buffer = ""
 
-                # 播放完整文本
-                self.interrupt_flag = False
-                self.is_speaking = True
-
-                was_interrupted = await asyncio.to_thread(
-                    self._synthesize_and_play_sync,
-                    full_text
-                )
-
-                self.is_speaking = False
-                if was_interrupted:
-                    print("⏸️  TTS 已被中断")
-                    await self.push_frame(TTSStoppedFrame(), direction)
-                else:
-                    print("✓ TTS 播放完成")
-                    # ✅ 发送 turn 结束信号
-                    await self.push_frame(UserStoppedSpeakingFrame(), direction)
-
-                self.text_buffer = []
+            # 发送 turn 结束信号
+            if not self.is_speaking:
+                await self.push_frame(UserStoppedSpeakingFrame(), direction)
 
             await self.push_frame(frame, direction)
             return
 
-        # ✅ 缓冲文本帧（流式输出）
+        # ✅ 流式处理文本帧（句子级缓冲）
         if isinstance(frame, TextFrame):
-            if self.is_buffering:
-                # 缓冲模式：收集文本，不播放
-                self.text_buffer.append(frame.text)
-            else:
-                # 非缓冲模式（兼容非流式输出）：直接播放
-                print(f"🔊 TTS 合成: {frame.text}")
-                self.interrupt_flag = False
-                self.is_speaking = True
+            self.sentence_buffer += frame.text
 
-                was_interrupted = await asyncio.to_thread(
-                    self._synthesize_and_play_sync,
-                    frame.text
-                )
+            # 检查是否有完整句子
+            for delimiter in self.sentence_delimiters:
+                if delimiter in self.sentence_buffer:
+                    # 分割句子
+                    parts = self.sentence_buffer.split(delimiter, 1)
+                    sentence = parts[0] + delimiter  # 包含标点符号
+                    self.sentence_buffer = parts[1] if len(parts) > 1 else ""
 
-                self.is_speaking = False
-                if was_interrupted:
-                    print("⏸️  TTS 已被中断")
-                    await self.push_frame(TTSStoppedFrame(), direction)
-                else:
-                    print("✓ TTS 播放完成")
-                    await self.push_frame(UserStoppedSpeakingFrame(), direction)
+                    # 立即播放完整句子
+                    print(f"🔊 TTS 合成: {sentence.strip()}")
+                    await self._synthesize_and_play(sentence.strip())
+                    break
 
             # 传递原始文本帧
             await self.push_frame(frame, direction)
         else:
             # 其他帧直接传递
             await self.push_frame(frame, direction)
+
+    async def _synthesize_and_play(self, text: str):
+        """异步合成并播放（句子级）"""
+        if not text:
+            return
+
+        self.interrupt_flag = False
+        self.is_speaking = True
+
+        was_interrupted = await asyncio.to_thread(
+            self._synthesize_and_play_sync,
+            text
+        )
+
+        self.is_speaking = False
+        if was_interrupted:
+            print("⏸️  TTS 已被中断")
+            await self.push_frame(TTSStoppedFrame(), FrameDirection.DOWNSTREAM)
 
     def _synthesize_and_play_sync(self, text) -> bool:
         """
@@ -453,7 +438,8 @@ class ScreenshotProcessor(FrameProcessor):
         super().__init__()
         self.vision_keywords = [
             "看", "查看", "讲解", "描述", "显示什么", "显示的",
-            "分析", "识别", "内容是", "画面", "截图", "图片"
+            "分析", "识别", "内容是", "画面", "截图", "图片",
+            "界面", "当前", "屏幕"  # ✅ 新增关键词
         ]
         self.operation_keywords = [
             "点击", "输入", "打开", "关闭", "启动", "切换",
@@ -553,15 +539,18 @@ class ScreenshotProcessor(FrameProcessor):
                     # 附加用户问题（用于 Vision API）
                     vision_frame.user_question = text_content
 
-                    # 推送到 QwenVisionProcessor
+                    # 推送 Vision Frame
                     await self.push_frame(vision_frame, direction)
+
+                    # ✅ 继续传递原始 Frame（让 user_aggregator 添加用户问题到 context）
+                    await self.push_frame(frame, direction)
                     return
 
                 except Exception as e:
                     print(f"❌ 截图失败: {e}")
                     import traceback
                     traceback.print_exc()
-                    # 失败时传递原始帧给 Agent
+                    # 失败时传递原始帧
                     await self.push_frame(frame, direction)
                     return
 
@@ -617,7 +606,7 @@ class QwenVisionProcessor(FrameProcessor):
                 result = response.json()
                 return result["choices"][0]["message"]["content"]
             else:
-                return f"API错误 {response.status_code}: {response.text[:100]}"
+                return f"API错误 {response.status_code}: {response.text}"
 
         except Exception as e:
             return f"Vision API 调用失败: {str(e)}"
@@ -644,11 +633,24 @@ class QwenVisionProcessor(FrameProcessor):
             result = await self._call_vision_api(frame.image, question)
 
             # 输出结果
-            print(f"📊 Vision 结果: {result[:100]}...")
+            print(f"📊 Vision 结果: {result}")
 
-            # 推送结果（TextFrame）
-            await self.push_frame(TextFrame(result), direction)
+            # ✅ 推送 TranscriptionFrame（而不是 TextFrame）
+            # 让 user_aggregator 将 Vision 结果添加到 context
+            await self.push_frame(
+                TranscriptionFrame(
+                    text=f"[视觉观察] {result}",
+                    user_id="system",
+                    timestamp=self._get_timestamp()
+                ),
+                direction
+            )
             return
 
         # 其他帧类型，直接传递
         await self.push_frame(frame, direction)
+
+    def _get_timestamp(self):
+        """获取当前时间戳（ISO 8601 格式）"""
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).isoformat()
