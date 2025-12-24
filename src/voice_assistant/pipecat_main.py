@@ -14,10 +14,23 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from .pipecat_adapters import (
     SherpaKWSProcessor,
     SherpaASRProcessor,
-    ReactAgentProcessor,
     PiperTTSProcessor,
     ScreenshotProcessor,
     QwenVisionProcessor,
+)
+
+# 导入 Qwen LLM Service（官方框架）
+from .qwen_llm_service import (
+    QwenLLMService,
+    QwenLLMContext,
+    create_tools_schema_from_mcp,
+    register_mcp_functions,
+)
+
+# 导入官方 Context Aggregator
+from pipecat.processors.aggregators.llm_response import (
+    LLMUserContextAggregator,
+    LLMAssistantContextAggregator,
 )
 
 # 导入现有组件
@@ -133,17 +146,26 @@ class SimplePyAudioTransport:
 
 async def create_pipecat_pipeline():
     """
-    创建 Pipecat Pipeline
+    创建 Pipecat Pipeline - 混合架构版
 
-    Phase 2: 集成 Vision - 完全异步架构
-    麦克风 → KWS → ASR → Vision (路由判断) → React Agent → TTS → 扬声器
+    保留自定义（官方不支持）：
+    - KWS 唤醒词检测（Sherpa-ONNX）
+    - ASR 本地识别（Sherpa-ONNX）
+    - Piper TTS（本地、免费）
+    - Qwen Vision（保持现有 API）
 
-    Vision 路由逻辑：
-    - 视觉关键词（看、查看、分析等）→ Vision API → TTS
-    - 操作关键词（点击、输入、打开等）→ React Agent → TTS
+    改用官方（享受官方生态）：
+    - QwenLLMService（继承 OpenAILLMService）
+    - LLMContextAggregatorPair（自动管理对话历史）
+    - Function Calling（MCP 工具无缝集成）
+
+    Pipeline 结构：
+    麦克风 → KWS → ASR → context.user() → Screenshot → Vision → LLM → context.assistant() → TTS → 扬声器
+                                ↓                                 ↓
+                         添加用户消息                       保存助手响应
     """
     print("\n" + "="*60)
-    print("🚀 Pipecat 模式 - 初始化中...")
+    print("🚀 Pipecat 模式 - 混合架构版 - 初始化中...")
     print("="*60)
 
     # 1. 初始化现有组件
@@ -154,6 +176,11 @@ async def create_pipecat_pipeline():
 
     # 手动异步启动 MCP Servers
     print("\n⏳ 正在启动 MCP Servers（异步模式）...")
+
+    # 创建独立的 MCP Manager（不使用 wake_system.agent.mcp）
+    from .mcp_client import MCPManager
+    mcp = MCPManager()
+
     servers = [
         # Playwright-MCP: 浏览器操作（主要使用）
         ("playwright", "npx", ["@playwright/mcp@latest"], 120)
@@ -162,9 +189,7 @@ async def create_pipecat_pipeline():
     success_count = 0
     for name, command, args, timeout in servers:
         try:
-            success = await wake_system.agent.mcp.add_server_async(
-                name, command, args, timeout
-            )
+            success = await mcp.add_server_async(name, command, args, timeout)
             if success:
                 success_count += 1
                 print(f"  ✓ {name} MCP Server 启动成功")
@@ -174,15 +199,11 @@ async def create_pipecat_pipeline():
 
     if success_count > 0:
         print(f"\n✅ 成功启动 {success_count}/{len(servers)} 个 MCP Server\n")
-        wake_system.agent.mcp._started = True
-
-        # 设置事件循环（用于同步方法回退）
-        wake_system.agent.mcp.loop = asyncio.get_event_loop()
 
         # 获取工具列表（使用异步方法）
-        wake_system.agent.available_tools = await wake_system.agent.mcp.list_all_tools_async()
+        mcp_tools = await mcp.list_all_tools_async()
         playwright_tools = [
-            tool for tool in wake_system.agent.available_tools
+            tool for tool in mcp_tools
             if tool.get("server") == "playwright"
         ]
         if playwright_tools:
@@ -191,7 +212,46 @@ async def create_pipecat_pipeline():
         print(f"\n❌ 所有 MCP Server 启动失败\n")
         raise RuntimeError("MCP Server 启动失败")
 
-    # 2. 创建 Pipecat Processors
+    # 2. 初始化 Qwen LLM Service（官方框架）
+    print("\n⏳ 正在初始化 Qwen LLM Service（官方框架）...")
+
+    llm = QwenLLMService(model="qwen-plus")
+
+    # 注册 MCP 函数处理器
+    await register_mcp_functions(llm, mcp)
+
+    # 创建 Tools Schema（用于 LLM Context）
+    tools_schema = create_tools_schema_from_mcp(mcp_tools)
+
+    # 创建对话上下文
+    messages = [
+        {
+            "role": "system",
+            "content": """你是一个智能语音助手，可以使用浏览器工具帮助用户。
+
+可用工具：
+- Playwright 浏览器操作（导航、点击、输入等）
+
+重要规则：
+1. 每次只执行一个动作
+2. 浏览器操作必须使用 Playwright 工具
+3. 优先使用快捷键和简单操作
+4. 最多 10 步必须完成任务"""
+        }
+    ]
+
+    context = QwenLLMContext(messages, tools=tools_schema)
+
+    # 创建 Context Aggregators（分别为 user 和 assistant）
+    user_aggregator = LLMUserContextAggregator(context)
+    assistant_aggregator = LLMAssistantContextAggregator(context)
+
+    print("✓ QwenLLMService 已初始化")
+    print("✓ MCP 函数已注册")
+    print("✓ LLMUserContextAggregator 已创建")
+    print("✓ LLMAssistantContextAggregator 已创建")
+
+    # 3. 创建 Pipecat Processors
     print("\n⏳ 正在创建 Pipecat Processors...")
 
     kws_proc = SherpaKWSProcessor(wake_system.kws_model)
@@ -204,8 +264,6 @@ async def create_pipecat_pipeline():
         api_key=wake_system.agent.api_key
     )  # 处理 UserImageRawFrame → TextFrame
 
-    agent_proc = ReactAgentProcessor(wake_system.agent)  # 基于官方推荐模式：直接异步调用
-
     # 创建音频传输（在创建 TTS Processor 之前）
     print("\n⏳ 正在创建音频传输...")
     transport = SimplePyAudioTransport(sample_rate=16000)
@@ -214,38 +272,46 @@ async def create_pipecat_pipeline():
     # 创建 TTS Processor（传入 transport 用于音频输出）
     tts_proc = PiperTTSProcessor(wake_system.agent.tts, transport)
 
-    print("✓ KWS Processor 已创建")
-    print("✓ ASR Processor 已创建")
+    print("✓ KWS Processor 已创建（自定义）")
+    print("✓ ASR Processor 已创建（自定义）")
     print("✓ Screenshot Processor 已创建（Pipecat 官方模式）")
     print("✓ Qwen Vision Processor 已创建（Pipecat 官方模式）")
-    print("✓ React Agent Processor 已创建")
-    print("✓ TTS Processor 已创建")
+    print("✓ TTS Processor 已创建（自定义：Piper）")
 
-    # 3. 构建 Pipeline（线性结构）
-    print("\n⏳ 正在构建 Pipeline...")
+    # 4. 构建 Pipeline（混合架构）
+    print("\n⏳ 正在构建 Pipeline（混合架构）...")
 
     pipeline = Pipeline([
-        kws_proc,
-        asr_proc,
-        screenshot_proc,     # 判断 + 截图 → UserImageRawFrame（Pipecat 官方）
-        qwen_vision_proc,    # Vision API → TextFrame（Pipecat 官方）
-        agent_proc,
-        tts_proc,
+        kws_proc,                       # 自定义：KWS 唤醒词检测
+        asr_proc,                       # 自定义：ASR 本地识别
+        user_aggregator,                # 官方：添加用户消息到上下文 ✨
+        screenshot_proc,                # 自定义：截图 → UserImageRawFrame
+        qwen_vision_proc,               # 自定义：Vision API → TextFrame
+        llm,                            # 官方：Qwen LLM Service（已注册 MCP 函数）✨
+        assistant_aggregator,           # 官方：保存助手响应到上下文 ✨
+        tts_proc,                       # 自定义：Piper TTS
     ])
 
     print("✓ Pipeline 已构建")
     print("\n" + "="*60)
-    print("✓ Pipecat 模式启动完成！")
+    print("✓ Pipecat 混合架构启动完成！")
     print("="*60)
-    print("\n📋 Pipeline 结构（完全采用 Pipecat 官方模式）:")
-    print("   麦克风 → KWS → ASR → Screenshot → QwenVision → Agent → TTS → 扬声器")
-    print("                           ↓                ↓")
-    print("                   UserImageRawFrame    TextFrame")
+    print("\n📋 Pipeline 结构（混合架构）:")
+    print("   自定义：KWS → ASR")
+    print("   官方：  context.user() ✨")
+    print("   自定义：Screenshot → Vision")
+    print("   官方：  LLM Service + Function Calling ✨")
+    print("   官方：  context.assistant() ✨")
+    print("   自定义：Piper TTS")
+    print("\n💡 技术亮点:")
+    print("   ✅ LLM Service 自动管理对话历史")
+    print("   ✅ MCP 工具通过 Function Calling 无缝集成")
+    print("   ✅ 保留本地 KWS + ASR + TTS（免费、无网络依赖）")
     print("\n💬 说出唤醒词开始对话...")
     print("   默认唤醒词: 小智、你好助手、智能助手")
     print("   按 Ctrl+C 退出\n")
 
-    return pipeline, transport, wake_system
+    return pipeline, transport, wake_system, mcp
 
 
 async def run_pipeline_with_audio(pipeline, transport):
@@ -311,14 +377,15 @@ async def run_pipeline_with_audio(pipeline, transport):
 
 
 async def main():
-    """Pipecat 主程序"""
+    """Pipecat 主程序 - 混合架构版"""
     pipeline = None
     transport = None
     wake_system = None
+    mcp = None
 
     try:
-        # 创建 Pipeline
-        pipeline, transport, wake_system = await create_pipecat_pipeline()
+        # 创建 Pipeline（混合架构）
+        pipeline, transport, wake_system, mcp = await create_pipecat_pipeline()
 
         # 运行 Pipeline（让 Pipecat 处理 Ctrl+C）
         await run_pipeline_with_audio(pipeline, transport)
@@ -345,9 +412,9 @@ async def main():
                 print(f"  ⚠️ 停止音频传输时出错: {e}")
 
         # 2. 停止 MCP Servers
-        if wake_system and hasattr(wake_system, 'agent'):
+        if mcp:
             try:
-                await wake_system.agent.mcp.stop_all_async()
+                await mcp.stop_all_async()
                 print("  ✓ MCP Servers 已停止")
             except Exception as e:
                 print(f"  ⚠️ 停止 MCP Servers 时出错: {e}")
