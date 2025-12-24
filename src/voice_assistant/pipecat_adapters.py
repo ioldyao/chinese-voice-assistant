@@ -15,6 +15,7 @@ from pipecat.frames.frames import (
     AudioRawFrame,
     TextFrame,
     TTSAudioRawFrame,
+    OutputAudioRawFrame,  # ✅ TTS 音频输出帧
     InterruptionFrame,  # ✅ 官方中断帧
     TTSStoppedFrame,    # ✅ 官方 TTS 停止帧
     TranscriptionFrame,  # ✅ 用于 LLMUserContextAggregator
@@ -292,21 +293,21 @@ class ReactAgentProcessor(FrameProcessor):
 
 class PiperTTSProcessor(FrameProcessor):
     """
-    Piper TTS 适配器 - 句子级流式播放
+    Piper TTS 适配器 - 句子级流式播放（符合 Pipecat 标准）
 
-    将现有的 TTSManagerStreaming 封装为 Pipecat Processor
-    接收文本帧，按句子缓冲并流式播放
-    响应官方 InterruptionFrame，发出 TTSStoppedFrame
+    改进：
+    - ✅ 生成标准 OutputAudioRawFrame（不直接播放）
+    - ✅ 让 transport.output() 负责实际播放
+    - ✅ 支持中断和句子级缓冲
     """
 
-    def __init__(self, tts_manager, transport=None):
+    def __init__(self, tts_manager):
         super().__init__()
         self.tts = tts_manager
-        self.transport = transport  # 用于直接播放音频
         self.interrupt_flag = False  # 中断标志
         self.is_speaking = False  # TTS 播放状态
 
-        # ✅ 句子缓冲区（按句子流式播放）
+        # 句子缓冲区（按句子流式播放）
         self.sentence_buffer = ""
         self.sentence_delimiters = ["。", "！", "？", ".", "!", "?", "\n"]
 
@@ -318,7 +319,7 @@ class PiperTTSProcessor(FrameProcessor):
         """处理文本帧，生成 TTS 音频"""
         await super().process_frame(frame, direction)
 
-        # ✅ 响应官方中断帧，设置中断
+        # 响应官方中断帧，设置中断
         if isinstance(frame, InterruptionFrame):
             if self.is_speaking:
                 print("⏸️  检测到中断信号，停止TTS播放")
@@ -329,13 +330,13 @@ class PiperTTSProcessor(FrameProcessor):
             await self.push_frame(frame, direction)
             return
 
-        # ✅ 检测 LLM 响应结束（播放剩余缓冲）
+        # 检测 LLM 响应结束（播放剩余缓冲）
         from pipecat.frames.frames import LLMFullResponseEndFrame
         if isinstance(frame, LLMFullResponseEndFrame):
             # 播放剩余的不完整句子
             if self.sentence_buffer.strip():
                 print(f"🔊 TTS 合成（剩余）: {self.sentence_buffer}")
-                await self._synthesize_and_play(self.sentence_buffer)
+                await self._synthesize_and_push(self.sentence_buffer)
                 self.sentence_buffer = ""
 
             # 发送 turn 结束信号
@@ -345,7 +346,7 @@ class PiperTTSProcessor(FrameProcessor):
             await self.push_frame(frame, direction)
             return
 
-        # ✅ 流式处理文本帧（句子级缓冲）
+        # 流式处理文本帧（句子级缓冲）
         if isinstance(frame, TextFrame):
             self.sentence_buffer += frame.text
 
@@ -357,9 +358,9 @@ class PiperTTSProcessor(FrameProcessor):
                     sentence = parts[0] + delimiter  # 包含标点符号
                     self.sentence_buffer = parts[1] if len(parts) > 1 else ""
 
-                    # 立即播放完整句子
+                    # 立即合成完整句子
                     print(f"🔊 TTS 合成: {sentence.strip()}")
-                    await self._synthesize_and_play(sentence.strip())
+                    await self._synthesize_and_push(sentence.strip())
                     break
 
             # 传递原始文本帧
@@ -368,16 +369,21 @@ class PiperTTSProcessor(FrameProcessor):
             # 其他帧直接传递
             await self.push_frame(frame, direction)
 
-    async def _synthesize_and_play(self, text: str):
-        """异步合成并播放（句子级）"""
+    async def _synthesize_and_push(self, text: str):
+        """
+        异步合成并推送音频帧（符合 Pipecat 标准）
+
+        改进：生成 OutputAudioRawFrame 而不是直接播放
+        """
         if not text:
             return
 
         self.interrupt_flag = False
         self.is_speaking = True
 
+        # 在线程池中执行合成
         was_interrupted = await asyncio.to_thread(
-            self._synthesize_and_play_sync,
+            self._synthesize_and_push_sync,
             text
         )
 
@@ -386,9 +392,11 @@ class PiperTTSProcessor(FrameProcessor):
             print("⏸️  TTS 已被中断")
             await self.push_frame(TTSStoppedFrame(), FrameDirection.DOWNSTREAM)
 
-    def _synthesize_and_play_sync(self, text) -> bool:
+    def _synthesize_and_push_sync(self, text: str) -> bool:
         """
-        同步 TTS 合成并播放（在线程池中执行），支持中断
+        同步 TTS 合成（在线程池中执行），支持中断
+
+        改进：生成 OutputAudioRawFrame 而不是直接播放
 
         Returns:
             bool: 是否被中断
@@ -401,7 +409,7 @@ class PiperTTSProcessor(FrameProcessor):
                 for chunk in audio_generator:
                     # 检查中断标志
                     if self.interrupt_flag:
-                        print("⏸️  TTS 播放已中断")
+                        print("⏸️  TTS 合成已中断")
                         return True  # 返回中断标志
 
                     # 提取音频数据
@@ -411,9 +419,24 @@ class PiperTTSProcessor(FrameProcessor):
                     # 转换为 int16
                     audio_int16 = (audio_float * 32767).astype(np.int16)
 
-                    # 直接播放到 transport
-                    if self.transport and self.transport.output_stream:
-                        self.transport.output_stream.write(audio_int16.tobytes())
+                    # ✅ 生成标准 OutputAudioRawFrame（而不是直接播放）
+                    audio_frame = OutputAudioRawFrame(
+                        audio=audio_int16.tobytes(),
+                        sample_rate=sample_rate,
+                        num_channels=1
+                    )
+
+                    # ✅ 推送到 Pipeline（让 transport.output() 播放）
+                    # 注意：这里需要使用同步方式推送（在线程池中）
+                    # 使用 asyncio.run_coroutine_threadsafe 在主事件循环中推送
+                    import asyncio
+                    loop = asyncio.get_event_loop()
+                    future = asyncio.run_coroutine_threadsafe(
+                        self.push_frame(audio_frame, FrameDirection.DOWNSTREAM),
+                        loop
+                    )
+                    # 等待推送完成
+                    future.result(timeout=1.0)
 
                 return False  # 正常完成，未中断
 
@@ -421,25 +444,33 @@ class PiperTTSProcessor(FrameProcessor):
                 print(f"❌ TTS 生成失败: {e}")
                 return False
 
+        return False
 
-# ==================== Vision Processors (Pipecat 官方模式) ====================
 
-class ScreenshotProcessor(FrameProcessor):
+# ==================== Vision Processor (符合 Pipecat 标准) ====================
+
+class VisionProcessor(FrameProcessor):
     """
-    截图 Processor - 判断并生成 UserImageRawFrame
+    Vision Processor - 符合 Pipecat 官方推荐模式
 
-    采用 Pipecat 官方推荐模式：
-    - 判断是否需要视觉理解
-    - 截图并生成 UserImageRawFrame（内存传递，无文件 I/O）
-    - 传递给 QwenVisionProcessor 处理
+    架构改进：
+    - ✅ 接收 LLMContext，直接修改 context（而不是推送新 Frame）
+    - ✅ 在 user_aggregator 之后运行（context 已包含用户消息）
+    - ✅ Vision 结果添加到 context，LLM 自动看到
+    - ✅ 无需推送额外 Frame，符合官方架构
     """
 
-    def __init__(self):
+    def __init__(self, api_url: str, api_key: str, context):
         super().__init__()
+        self.api_url = api_url
+        self.api_key = api_key
+        self.context = context  # LLMContext 实例
+
+        # Vision 关键词
         self.vision_keywords = [
             "看", "查看", "讲解", "描述", "显示什么", "显示的",
             "分析", "识别", "内容是", "画面", "截图", "图片",
-            "界面", "当前", "屏幕"  # ✅ 新增关键词
+            "界面", "当前", "屏幕"
         ]
         self.operation_keywords = [
             "点击", "输入", "打开", "关闭", "启动", "切换",
@@ -455,11 +486,7 @@ class ScreenshotProcessor(FrameProcessor):
         return any(kw in text for kw in self.vision_keywords)
 
     async def _capture_screenshot_async(self) -> tuple[bytes, tuple[int, int]]:
-        """
-        异步截图，返回 (图片字节, 尺寸)
-
-        使用 Pipecat 官方模式：内存传递，无文件 I/O
-        """
+        """异步截图，返回 (图片字节, 尺寸)"""
         def capture():
             from PIL import ImageGrab
             import io
@@ -502,76 +529,6 @@ class ScreenshotProcessor(FrameProcessor):
             return img_byte_arr.getvalue(), screenshot.size
 
         return await asyncio.to_thread(capture)
-
-    async def process_frame(self, frame, direction):
-        """处理帧"""
-        await super().process_frame(frame, direction)
-
-        # 响应中断
-        if isinstance(frame, InterruptionFrame):
-            await self.push_frame(frame, direction)
-            return
-
-        # ✅ 处理文本命令（支持 TextFrame 和 TranscriptionFrame）
-        text_content = None
-        if isinstance(frame, TextFrame):
-            text_content = frame.text
-        elif isinstance(frame, TranscriptionFrame):
-            text_content = frame.text
-
-        if text_content:
-            if self._needs_vision(text_content):
-                print(f"🔍 Vision 模式: {text_content}")
-
-                try:
-                    # 异步截图（内存操作）
-                    img_bytes, size = await self._capture_screenshot_async()
-
-                    # 创建 UserImageRawFrame（Pipecat 官方 Frame）
-                    from pipecat.frames.frames import UserImageRawFrame
-
-                    vision_frame = UserImageRawFrame(
-                        image=img_bytes,
-                        size=size,
-                        format="PNG"
-                    )
-
-                    # 附加用户问题（用于 Vision API）
-                    vision_frame.user_question = text_content
-
-                    # 推送 Vision Frame
-                    await self.push_frame(vision_frame, direction)
-
-                    # ✅ 继续传递原始 Frame（让 user_aggregator 添加用户问题到 context）
-                    await self.push_frame(frame, direction)
-                    return
-
-                except Exception as e:
-                    print(f"❌ 截图失败: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    # 失败时传递原始帧
-                    await self.push_frame(frame, direction)
-                    return
-
-        # 非 Vision 任务，传递给下游
-        await self.push_frame(frame, direction)
-
-
-class QwenVisionProcessor(FrameProcessor):
-    """
-    Qwen Vision API Processor - 处理 UserImageRawFrame
-
-    采用 Pipecat 官方推荐模式：
-    - 接收 UserImageRawFrame（官方 Frame 类型）
-    - 调用 Qwen-VL-Max API（完全异步）
-    - 返回 TextFrame（结果）
-    """
-
-    def __init__(self, api_url: str, api_key: str):
-        super().__init__()
-        self.api_url = api_url
-        self.api_key = api_key
 
     async def _call_vision_api(self, img_bytes: bytes, question: str) -> str:
         """调用 Qwen-VL-Max API（异步）"""
@@ -620,37 +577,41 @@ class QwenVisionProcessor(FrameProcessor):
             await self.push_frame(frame, direction)
             return
 
-        # 处理 UserImageRawFrame（Pipecat 官方 Frame）
-        from pipecat.frames.frames import UserImageRawFrame
+        # ✅ 检查 context 中的最后一条用户消息（由 user_aggregator 添加）
+        if self.context.messages:
+            last_message = self.context.messages[-1]
 
-        if isinstance(frame, UserImageRawFrame):
-            # 提取问题
-            question = getattr(frame, 'user_question', "屏幕上有什么内容？")
+            # 只处理用户消息
+            if last_message.get("role") == "user":
+                text_content = last_message.get("content", "")
 
-            print(f"📸 调用 Vision API...")
+                if self._needs_vision(text_content):
+                    print(f"🔍 Vision 模式: {text_content}")
 
-            # 异步调用 API
-            result = await self._call_vision_api(frame.image, question)
+                    try:
+                        # 异步截图
+                        img_bytes, size = await self._capture_screenshot_async()
 
-            # 输出结果
-            print(f"📊 Vision 结果: {result}")
+                        # 调用 Vision API
+                        print(f"📸 调用 Vision API...")
+                        result = await self._call_vision_api(img_bytes, text_content)
 
-            # ✅ 推送 TranscriptionFrame（而不是 TextFrame）
-            # 让 user_aggregator 将 Vision 结果添加到 context
-            await self.push_frame(
-                TranscriptionFrame(
-                    text=f"[视觉观察] {result}",
-                    user_id="system",
-                    timestamp=self._get_timestamp()
-                ),
-                direction
-            )
-            return
+                        print(f"📊 Vision 结果: {result}")
 
-        # 其他帧类型，直接传递
+                        # ✅ 直接修改 context（添加 Vision 观察结果）
+                        # 方式1：作为 system 消息
+                        self.context.messages.append({
+                            "role": "system",
+                            "content": f"[视觉观察] {result}"
+                        })
+
+                        # 方式2：修改用户消息（包含 Vision 结果）
+                        # last_message["content"] = f"{text_content}\n\n[视觉观察] {result}"
+
+                    except Exception as e:
+                        print(f"❌ Vision 处理失败: {e}")
+                        import traceback
+                        traceback.print_exc()
+
+        # ✅ 传递所有帧（不推送新 Frame）
         await self.push_frame(frame, direction)
-
-    def _get_timestamp(self):
-        """获取当前时间戳（ISO 8601 格式）"""
-        from datetime import datetime, timezone
-        return datetime.now(timezone.utc).isoformat()
