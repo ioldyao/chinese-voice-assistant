@@ -7,10 +7,17 @@ from pathlib import Path
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask, PipelineParams
-from pipecat.frames.frames import StartFrame
+from pipecat.frames.frames import StartFrame, CancelFrame
+
+# ✅ 导入 VAD 相关模块
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 
 # 导入标准 PyAudio Transport
 from .pyaudio_transport import PyAudioTransport
+
+# 导入 VAD Processor
+from .vad_processor import SileroVADProcessor
 
 # 导入适配器（已修复）
 from .pipecat_adapters import (
@@ -180,24 +187,45 @@ async def create_pipecat_pipeline():
     print("✓ Vision Processor 已创建（直接修改 context）")
     print("✓ TTS Processor 已创建（生成 OutputAudioRawFrame）")
 
-    # 4. ✅ 创建标准 PyAudioTransport
+    # 4. ✅ 创建 Pipecat VAD Analyzer（暂时禁用）
+    print("\n⏳ VAD 配置...")
+
+    # ⚠️ 暂时禁用 VAD，等待后续优化
+    # vad_analyzer = SileroVADAnalyzer(
+    #     params=VADParams(
+    #         confidence=0.7,
+    #         start_secs=0.2,
+    #         stop_secs=0.8,
+    #         min_volume=0.6,
+    #     )
+    # )
+    # vad_processor = SileroVADProcessor(vad_analyzer)
+    # print("✓ Silero VAD 已配置")
+
+    print("⚠️ VAD 暂时禁用（使用 ASR 内部 VAD）")
+
+    # 5. ✅ 创建标准 PyAudioTransport
     print("\n⏳ 正在创建 PyAudio Transport...")
+
     transport = PyAudioTransport(sample_rate=16000)
     await transport.start()
 
-    # 5. ✅ 构建 Pipeline（官方标准顺序）
+    print("✓ PyAudio Transport 已启动")
+
+    # 6. ✅ 构建 Pipeline（官方标准顺序）
     print("\n⏳ 正在构建 Pipeline（官方架构）...")
 
     pipeline = Pipeline([
         transport.input(),              # 1. ✅ 官方音频输入
-        kws_proc,                       # 2. KWS 唤醒词检测
-        asr_proc,                       # 3. ASR 识别
-        user_aggregator,                # 4. ✅ 添加用户消息到 context（紧跟 ASR）
-        vision_proc,                    # 5. ✅ Vision（直接修改 context）
-        llm,                            # 6. ✅ LLM 生成（已注册 MCP 函数）
-        assistant_aggregator,           # 7. ✅ 保存助手响应（紧跟 LLM）
-        tts_proc,                       # 8. ✅ TTS 合成（生成 OutputAudioRawFrame）
-        transport.output(),             # 9. ✅ 官方音频输出
+        # vad_processor,                # 2. ✅ VAD 检测（暂时禁用）
+        kws_proc,                       # 3. KWS 唤醒词检测
+        asr_proc,                       # 4. ASR 识别
+        user_aggregator,                # 5. ✅ 添加用户消息到 context（紧跟 ASR）
+        vision_proc,                    # 6. ✅ Vision（直接修改 context）
+        llm,                            # 7. ✅ LLM 生成（已注册 MCP 函数）
+        assistant_aggregator,           # 8. ✅ 保存助手响应（紧跟 LLM）
+        tts_proc,                       # 9. ✅ TTS 合成（生成 OutputAudioRawFrame）
+        transport.output(),             # 10. ✅ 官方音频输出
     ])
 
     print("✓ Pipeline 已构建")
@@ -234,6 +262,8 @@ async def main():
     transport = None
     wake_system = None
     mcp = None
+    task = None
+    runner_task = None
 
     try:
         # 创建 Pipeline
@@ -256,7 +286,9 @@ async def main():
         runner = PipelineRunner()
 
         # ✅ 运行 Pipeline（官方方式）
-        await runner.run(task)
+        # 创建后台任务，以便可以响应 Ctrl+C
+        runner_task = asyncio.create_task(runner.run(task))
+        await runner_task
 
     except KeyboardInterrupt:
         print("\n⏹️  收到退出信号...")
@@ -271,19 +303,58 @@ async def main():
         # 清理资源
         print("\n🧹 正在清理资源...")
 
+        # 0. ✅ 停止 Pipeline（发送 CancelFrame）
+        if task:
+            try:
+                print("  ⏳ 正在停止 Pipeline...")
+                await asyncio.wait_for(
+                    task.queue_frames([CancelFrame()]),
+                    timeout=2.0
+                )
+                print("  ✓ CancelFrame 已发送")
+            except asyncio.TimeoutError:
+                print("  ⚠️ 发送 CancelFrame 超时")
+            except Exception as e:
+                print(f"  ⚠️ 发送 CancelFrame 时出错: {e}")
+
+        # 等待 runner 任务完成
+        if runner_task and not runner_task.done():
+            try:
+                await asyncio.wait_for(runner_task, timeout=3.0)
+                print("  ✓ Pipeline 已停止")
+            except asyncio.TimeoutError:
+                print("  ⚠️ Pipeline 停止超时，强制取消")
+                runner_task.cancel()
+                try:
+                    await runner_task
+                except asyncio.CancelledError:
+                    pass
+            except Exception as e:
+                print(f"  ⚠️ 等待 Pipeline 停止时出错: {e}")
+
         # 1. 停止音频传输
         if transport:
             try:
-                await transport.stop()
+                await asyncio.wait_for(
+                    transport.stop(),
+                    timeout=2.0
+                )
                 print("  ✓ 音频传输已停止")
+            except asyncio.TimeoutError:
+                print("  ⚠️ 停止音频传输超时")
             except Exception as e:
                 print(f"  ⚠️ 停止音频传输时出错: {e}")
 
         # 2. 停止 MCP Servers
         if mcp:
             try:
-                await mcp.stop_all_async()
+                await asyncio.wait_for(
+                    mcp.stop_all_async(),
+                    timeout=3.0
+                )
                 print("  ✓ MCP Servers 已停止")
+            except asyncio.TimeoutError:
+                print("  ⚠️ 停止 MCP Servers 超时")
             except Exception as e:
                 print(f"  ⚠️ 停止 MCP Servers 时出错: {e}")
 

@@ -29,10 +29,12 @@ from pipecat.frames.frames import (
 
 class SherpaKWSProcessor(FrameProcessor):
     """
-    Sherpa-ONNX KWS 适配器
+    Sherpa-ONNX KWS 适配器（简化版 - 配合 Pipecat VAD）
 
-    将现有的 Sherpa-ONNX KWS 模型封装为 Pipecat Processor
-    处理音频帧，检测唤醒词，输出官方 InterruptionFrame
+    改进：
+    - ✅ 检测到唤醒词时发送 InterruptionFrame（中断 TTS）
+    - ✅ 依赖 Pipecat VAD 自动检测用户后续说话
+    - ✅ 职责明确，逻辑简化
     """
 
     def __init__(self, kws_model):
@@ -65,13 +67,8 @@ class SherpaKWSProcessor(FrameProcessor):
                 self.is_awake = True
                 self.last_keyword = result
 
-                # ✅ 发送用户开始说话的信号
-                await self.push_frame(
-                    UserStartedSpeakingFrame(),
-                    direction
-                )
-
-                # ✅ 发出官方中断帧（触发 ASR 开始录音）
+                # ✅ 只发送中断帧（中断 TTS，如果正在播放）
+                # 注意：不发送 UserStartedSpeakingFrame，让 VAD 自动检测用户后续说话
                 await self.push_frame(
                     InterruptionFrame(),
                     direction
@@ -91,10 +88,15 @@ class SherpaKWSProcessor(FrameProcessor):
 
 class SherpaASRProcessor(FrameProcessor):
     """
-    Sherpa-ONNX ASR 适配器
+    Sherpa-ONNX ASR 适配器（临时版本 - 内置简单 VAD）
 
-    将现有的 Sherpa-ONNX ASR 模型封装为 Pipecat Processor
-    检测到唤醒词后开始录音，使用静音检测自动停止，输出识别文本
+    注意：
+    - ⚠️ 当前使用简单的 RMS VAD（因为 Pipecat VAD 暂时禁用）
+    - ✅ 响应 InterruptionFrame 开始录音（来自 KWS）
+    - ✅ 使用音量检测判断停止说话
+    - ✅ 添加超时保护
+
+    TODO: 集成 Pipecat SileroVADAnalyzer 后移除此逻辑
     """
 
     def __init__(self, asr_model, sample_rate=16000):
@@ -105,54 +107,53 @@ class SherpaASRProcessor(FrameProcessor):
         # 录音状态
         self.recording = False
         self.buffer = []
+        self.frame_count = 0
 
-        # 静音检测参数（与原有逻辑一致）
-        self.silence_threshold = 0.02
-        self.max_silence_frames = 20  # 约 1.3 秒
-        self.min_record_frames = 15   # 最小录音保护
-
+        # ⚠️ 临时使用简单 VAD（待替换为 Pipecat VAD）
+        self.silence_threshold = 0.02  # RMS 阈值
+        self.max_silence_frames = 20   # 约 0.64 秒静音
         self.silence_count = 0
         self.has_speech = False
-        self.frame_count = 0
+
+        # ✅ 超时保护（防止无限录音）
+        self.max_record_frames = 300  # 约 10 秒（300帧 × 32ms）
+        self.max_record_duration = 10.0  # 秒
 
     async def process_frame(self, frame, direction):
         """处理音频帧，识别语音"""
         await super().process_frame(frame, direction)
 
-        # ✅ 检测官方中断帧，开始录音
+        # ✅ 响应 KWS 的中断信号（开始录音）
         if isinstance(frame, InterruptionFrame):
-            print("📝 开始录音识别...")
+            print("📝 检测到唤醒词，开始录音...")
             self.recording = True
             self.buffer = []
+            self.frame_count = 0
             self.silence_count = 0
             self.has_speech = False
-            self.frame_count = 0
-
-            # 传递中断帧
             await self.push_frame(frame, direction)
             return
 
-        # 录音过程
+        # ✅ 录音过程（使用简单 RMS VAD）
         if self.recording and isinstance(frame, AudioRawFrame):
             # 提取音频数据
             audio_data = np.frombuffer(frame.audio, dtype=np.int16).astype(np.float32) / 32768.0
             self.buffer.append(audio_data)
             self.frame_count += 1
 
-            # 计算音量
+            # ⚠️ 简单 VAD：计算音量
             volume = np.sqrt(np.mean(audio_data**2))
 
-            # 静音检测
             if volume >= self.silence_threshold:
                 self.has_speech = True
                 self.silence_count = 0
             else:
-                self.silence_count += 1
+                if self.has_speech:  # 只有在检测到语音后才计算静音
+                    self.silence_count += 1
 
-            # 停止条件：有语音 + 连续静音 + 超过最小保护帧
-            if (self.has_speech and
-                self.silence_count > self.max_silence_frames and
-                self.frame_count > self.min_record_frames):
+            # 检查是否应该停止录音（静音判断）
+            if self.has_speech and self.silence_count > self.max_silence_frames:
+                print(f"✓ 检测到静音（{self.silence_count} 帧），开始识别...")
 
                 # 拼接音频
                 full_audio = np.concatenate(self.buffer)
@@ -167,15 +168,36 @@ class SherpaASRProcessor(FrameProcessor):
                         TranscriptionFrame(text=text, user_id="user", timestamp=self._get_timestamp()),
                         direction
                     )
-                    # 发送 UserStoppedSpeakingFrame 触发 LLM 处理
-                    await self.push_frame(
-                        UserStoppedSpeakingFrame(),
-                        direction
-                    )
 
                 # 重置状态
                 self.recording = False
                 self.buffer = []
+                self.frame_count = 0
+                self.silence_count = 0
+                self.has_speech = False
+                return
+
+            # ✅ 超时保护
+            if self.frame_count > self.max_record_frames:
+                print(f"⚠️ 录音超时（{self.max_record_duration}秒），强制停止")
+                # 强制触发识别
+                if self.buffer:
+                    full_audio = np.concatenate(self.buffer)
+                    text = await self._recognize_async(full_audio)
+                    if text:
+                        print(f"✓ 识别结果（超时）: {text}")
+                        await self.push_frame(
+                            TranscriptionFrame(text=text, user_id="user", timestamp=self._get_timestamp()),
+                            direction
+                        )
+
+                # 重置状态
+                self.recording = False
+                self.buffer = []
+                self.frame_count = 0
+                self.silence_count = 0
+                self.has_speech = False
+                return
 
             # 继续传递音频帧
             await self.push_frame(frame, direction)

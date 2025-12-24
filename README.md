@@ -8,7 +8,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.1.0-green.svg)](https://github.com/yourusername/chinese-voice-assistant)
+[![Version](https://img.shields.io/badge/version-2.1.1-green.svg)](https://github.com/yourusername/chinese-voice-assistant)
 
 </div>
 
@@ -145,7 +145,11 @@ zh ì n éng zh ù sh ǒu @智能助手
 
 ### 启动助手
 ```bash
+# 方式1：使用主入口
 python main.py
+
+# 方式2：直接运行 Pipecat 主程序（推荐）
+uv run python -m src.voice_assistant.pipecat_main_v2
 ```
 
 助手将自动启动 Pipecat 模式，开始持续监听唤醒词。
@@ -202,12 +206,17 @@ chinese-voice-assistant/
 │   │                         # - QwenLLMService（官方框架）
 │   │                         # - MCP Tools 转换器
 │   │                         # - Function Calling 注册
-│   ├── pipecat_main.py       # Pipecat 主程序 (427行)
-│   ├── pipecat_adapters.py   # Pipecat Processors (507行)
+│   ├── pipecat_main_v2.py    # Pipecat 主程序 v2 (365行)
+│   │                         # - 符合官方架构（BaseTransport + CancelFrame）
+│   │                         # - 修复 Ctrl+C 挂起问题
+│   ├── pyaudio_transport.py  # PyAudio Transport (201行)
+│   │                         # - 标准 BaseTransport 实现
+│   ├── vad_processor.py      # VAD Processor (63行)
+│   │                         # - Silero VAD 集成（开发中）
+│   ├── pipecat_adapters.py   # Pipecat Processors (620行)
 │   │                         # - SherpaKWSProcessor (KWS)
-│   │                         # - SherpaASRProcessor (ASR)
-│   │                         # - ScreenshotProcessor (截图)
-│   │                         # - QwenVisionProcessor (Vision)
+│   │                         # - SherpaASRProcessor (ASR + 临时 RMS VAD)
+│   │                         # - VisionProcessor (Vision)
 │   │                         # - PiperTTSProcessor (TTS)
 │   ├── tts.py                # TTS 语音合成 (372行)
 │   └── vision.py             # 视觉理解 (136行)
@@ -217,7 +226,14 @@ chinese-voice-assistant/
 │   └── pinyin_helper.py      # 拼音转换助手
 │
 ├── tests/                    # 测试文件
-│   └── test_phase1.py        # Pipecat 模式测试
+│   ├── test_pipecat_v2.py    # Pipecat v2 架构测试
+│   └── test_interruption.py  # 中断机制测试
+│
+├── docs/                     # 文档
+│   ├── vad-optimization-summary.md    # VAD 优化总结
+│   ├── pipecat-migration-guide.md    # v1.0 → v2.0 迁移指南
+│   ├── pipecat-changes-comparison.md # 详细代码对比
+│   └── interruption-analysis.md      # 中断机制分析
 │
 ├── config/                   # 配置文件
 │   └── keywords.txt          # 唤醒词配置
@@ -228,25 +244,27 @@ chinese-voice-assistant/
 │   └── sherpa-onnx-paraformer-zh/ # ASR 模型 (120MB)
 │
 ├── main.py                   # 主程序入口 (26行)
-├── pyproject.toml            # 项目配置 (v2.1.0)
+├── pyproject.toml            # 项目配置 (v2.1.1)
 └── README.md                 # 项目文档
 ```
 
 ### 代码统计
 | 模块 | 代码行数 | 主要功能 |
 |-----|---------|---------|
+| `pipecat_adapters.py` | 620 | Pipecat Processors（KWS/ASR+VAD/Vision/TTS） |
 | `react_agent.py` | 603 | React 推理框架（完全异步） |
-| `pipecat_adapters.py` | 507 | Pipecat Processors（KWS/ASR/Vision/TTS） |
-| `pipecat_main.py` | 427 | Pipecat Pipeline 配置（混合架构） |
 | `mcp_client.py` | 378 | MCP 客户端（异步多 Server） |
 | `tts.py` | 372 | TTS 引擎管理（Piper/RealtimeTTS） |
+| `pipecat_main_v2.py` | 365 | Pipecat Pipeline v2（修复挂起） |
 | `qwen_llm_service.py` | 209 | Qwen LLM Service（官方框架集成） |
+| `pyaudio_transport.py` | 201 | 标准 PyAudio Transport |
 | `vision.py` | 136 | Qwen-VL-Max 视觉理解（异步） |
 | `wake_word.py` | 95 | 模型加载器（KWS + ASR） |
+| `vad_processor.py` | 63 | Silero VAD Processor（开发中） |
 | `config.py` | 40 | 全局配置 |
 | `__init__.py` | 40 | 模块导出 |
 | `main.py` | 26 | Pipecat 单一入口 |
-| **总计** | **~2,833** | **混合架构完整实现** |
+| **总计** | **~3,148** | **v2.1.1 完整实现** |
 
 ---
 
@@ -266,29 +284,31 @@ ruff check src/
 
 ### 架构说明
 
-#### **Pipecat 混合架构**
+#### **Pipecat v2 架构**
 ```
 Pipeline:
-  SimplePyAudioTransport (音频I/O)
+  PyAudioTransport.input() (音频输入 - 标准 BaseTransport)
     ↓
   SherpaKWSProcessor (唤醒词检测 - 自定义)
     ↓
-  SherpaASRProcessor (语音识别 - 自定义)
+  SherpaASRProcessor (语音识别 + 临时 RMS VAD - 自定义)
     ↓
-  LLMUserContextAggregator (添加用户消息 - 官方 ✨)
+  OpenAIUserContextAggregator (添加用户消息 - 官方 ✨)
     ↓
-  ScreenshotProcessor (截图 - 自定义)
-    ↓
-  QwenVisionProcessor (视觉理解 - 自定义)
+  VisionProcessor (视觉理解 - 自定义)
     ↓
   QwenLLMService (LLM + Function Calling - 官方 ✨)
     ↓
-  LLMAssistantContextAggregator (保存助手响应 - 官方 ✨)
+  OpenAIAssistantContextAggregator (保存助手响应 - 官方 ✨)
     ↓
   PiperTTSProcessor (语音合成 - 自定义)
     ↓
-  SimplePyAudioTransport (音频输出)
+  PyAudioTransport.output() (音频输出 - 标准 BaseTransport)
 ```
+
+**注意**：
+- ⚠️ 当前 ASR 使用临时 RMS VAD（简单音量检测）
+- 🚧 Silero VAD 集成正在开发中（等待 API 兼容）
 
 ### 核心改进
 
@@ -421,6 +441,44 @@ A:
 ---
 
 ## 🔥 最近更新
+
+### v2.1.1 - 架构优化与修复（2025-12-25）
+
+#### 🐛 Bug 修复
+1. **修复 Ctrl+C 挂起问题** - 程序优雅退出
+   - ✅ 添加 `CancelFrame` 发送逻辑，正确停止 Pipeline
+   - ✅ 音频输入循环响应 `CancelFrame` 退出
+   - ✅ 所有清理操作添加超时保护（2-3 秒）
+   - ✅ 退出时显示清理日志，提供清晰反馈
+
+2. **符合 Pipecat v0.0.98 BaseTransport 标准**
+   - ✅ 移除 `TransportParams` 传递（API 不支持）
+   - ✅ 创建独立 `PyAudioTransport` 类
+   - ✅ 实现标准 `input()` 和 `output()` 方法
+
+#### ⚠️ 临时调整
+1. **VAD 集成暂时禁用** - 等待 Pipecat API 兼容
+   - SileroVADAnalyzer 缺少预期的公共 API（`start()` 方法）
+   - ASR 暂时回退到简单 RMS VAD（音量检测）
+   - 已完成 VAD 优化代码（待 Pipecat 更新后启用）
+
+2. **ASR 暂用内置 VAD** - 临时方案
+   - 使用 RMS 阈值检测（0.02）
+   - 静音检测：20 帧（约 0.64 秒）
+   - 超时保护：300 帧（约 10 秒）
+   - TODO: 待 Pipecat VAD API 稳定后切换
+
+#### 📝 新增文档
+- `docs/vad-optimization-summary.md` - VAD 优化完整总结
+- `pyaudio_transport.py` - 标准 Transport 实现
+- `vad_processor.py` - Silero VAD Processor（待启用）
+
+#### 🔧 技术改进
+- ✅ Pipeline 清理机制更健壮
+- ✅ 退出流程完全异步，无死锁风险
+- ✅ 代码增加 11%（~2,833 → ~3,148 行，主要是新增 Transport 和 VAD）
+
+---
 
 ### v2.1.0 - Pipecat 官方 LLM Service 集成（2025-12）
 

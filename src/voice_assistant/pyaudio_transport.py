@@ -136,6 +136,7 @@ class PyAudioTransport(BaseTransport):
         channels: int = 1,
         chunk_size: int = 512,
     ):
+        # ✅ BaseTransport 只接受 name, input_name, output_name 参数
         super().__init__()
 
         self.sample_rate = sample_rate
