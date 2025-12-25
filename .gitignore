@@ -46,3 +46,7 @@ test_keywords.txt
 
 # Old/backup files
 voice_wake_up.py
+
+# Example projects (excluded from version control)
+Example/pipecat-client-web/
+Example/voice-ui-kit/
