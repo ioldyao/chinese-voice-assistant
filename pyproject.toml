@@ -1,6 +1,6 @@
 [project]
 name = "voice-assistant"
-version = "2.0.0"
+version = "2.2.1"
 description = "智能语音助手 - React Agent + Windows-MCP (KWS + ASR + MCP)"
 readme = "README.md"
 requires-python = ">=3.12"

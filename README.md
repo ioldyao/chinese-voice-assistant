@@ -8,7 +8,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.2.0-green.svg)](https://github.com/yourusername/chinese-voice-assistant)
+[![Version](https://img.shields.io/badge/version-2.2.1-green.svg)](https://github.com/yourusername/chinese-voice-assistant)
 
 </div>
 
@@ -252,7 +252,7 @@ chinese-voice-assistant/
 │   └── sherpa-onnx-paraformer-zh/ # ASR 模型 (120MB)
 │
 ├── main.py                   # 主程序入口 (26行)
-├── pyproject.toml            # 项目配置 (v2.1.1)
+├── pyproject.toml            # 项目配置 (v2.2.1)
 └── README.md                 # 项目文档
 ```
 
@@ -272,7 +272,7 @@ chinese-voice-assistant/
 | `config.py` | 40 | 全局配置 |
 | `__init__.py` | 40 | 模块导出 |
 | `main.py` | 26 | Pipecat 单一入口 |
-| **总计** | **~3,148** | **v2.2.0 完整实现** |
+| **总计** | **~3,148** | **v2.2.1 完整实现** |
 
 ---
 
@@ -292,7 +292,7 @@ ruff check src/
 
 ### 架构说明
 
-#### **Pipecat v2.2 架构**
+#### **Pipecat v2.2.1 架构**
 ```
 Pipeline:
   PyAudioTransport.input() (音频输入 - 标准 BaseTransport + VAD + Turn Detection)
@@ -307,9 +307,9 @@ Pipeline:
     ↓
   QwenLLMService (LLM + Function Calling - 官方 ✨)
     ↓
-  OpenAIAssistantContextAggregator (保存助手响应 - 官方 ✨)
+  PiperTTSProcessor (语音合成 - 自定义) ← ✨ v2.2.1 调整：提前到这里
     ↓
-  PiperTTSProcessor (语音合成 - 自定义)
+  OpenAIAssistantContextAggregator (保存助手响应 - 官方 ✨)
     ↓
   PyAudioTransport.output() (音频输出 - 标准 BaseTransport)
 ```
@@ -319,6 +319,7 @@ Pipeline:
 - ✅ Smart Turn v3（智能判断对话完成，理解语言上下文）
 - ✅ 避免句子中间被打断
 - ✅ 支持 23 种语言
+- ✅ **v2.2.1 修复**：TTS 在 aggregator 之前，确保接收 LLM 输出
 
 ### 核心改进
 
@@ -452,6 +453,43 @@ A:
 ---
 
 ## 🔥 最近更新
+
+### v2.2.1 - 修复 TTS 无输出问题（2025-12-25）
+
+#### 🐛 关键 Bug 修复
+1. **修复 LLM 文本无法到达 TTS 处理器**
+   - 问题：`assistant_aggregator` 消费了 `LLMTextFrame` 但不传递给下游
+   - 原因：官方设计假设下游不需要 LLM 文本帧
+   - 修复：调整 Pipeline 顺序，将 TTS 放在 `assistant_aggregator` **之前**
+   - 结果：TTS 能正常接收并播放 LLM 响应 ✅
+
+2. **修复 TTS 事件循环错误**
+   - 问题：`There is no current event loop in thread 'asyncio_X'`
+   - 原因：在线程池中执行 TTS 时尝试获取当前事件循环
+   - 修复：在初始化时保存主事件循环引用，线程池中使用 `run_coroutine_threadsafe()`
+   - 结果：TTS 正常在线程池中推送音频帧 ✅
+
+#### ✨ 用户体验改进
+- **实时 LLM 输出显示**：终端实时显示流式文本（`🤖 LLM: ...`）
+- **简化 TTS 日志**：移除冗余的句子合成日志
+- **Pipeline 架构优化**：新顺序 `LLM → TTS → assistant_aggregator`
+
+#### 📊 Pipeline 结构调整
+```
+修复前（错误）：
+llm → assistant_aggregator → tts  ❌ (TTS 收不到 LLMTextFrame)
+
+修复后（正确）：
+llm → tts → assistant_aggregator  ✅ (TTS 正常接收并播放)
+```
+
+#### 🎯 技术亮点
+- ✅ 符合 Pipecat 帧传递机制（aggregator 消费但不传递文本帧）
+- ✅ TTS 处理后传递帧给 aggregator（两者都正常工作）
+- ✅ 降低 TTS 延迟（不需要等待 context 更新）
+- ✅ 保持官方代码完整性（不修改 Pipecat 源码）
+
+---
 
 ### v2.2.0 - Smart Turn v3 智能对话检测（2025-12-25）
 

@@ -21,6 +21,7 @@ from pipecat.frames.frames import (
     TranscriptionFrame,  # ✅ 用于 LLMUserContextAggregator
     UserStartedSpeakingFrame,  # ✅ 用户开始说话
     UserStoppedSpeakingFrame,  # ✅ 触发 LLM 处理
+    LLMFullResponseEndFrame,  # ✅ LLM 响应结束帧
     EndFrame,
 )
 
@@ -337,6 +338,12 @@ class PiperTTSProcessor(FrameProcessor):
         self.sentence_buffer = ""
         self.sentence_delimiters = ["。", "！", "？", ".", "!", "?", "\n"]
 
+        # ✅ 保存主事件循环引用（用于线程池中推送帧）
+        self._loop = None
+
+        # ✅ LLM 输出显示（用于终端可见性）
+        self._llm_started = False
+
     def interrupt(self):
         """中断当前TTS播放"""
         self.interrupt_flag = True
@@ -345,6 +352,26 @@ class PiperTTSProcessor(FrameProcessor):
         """处理文本帧，生成 TTS 音频"""
         await super().process_frame(frame, direction)
 
+        # ✅ 第一次处理帧时，保存事件循环引用
+        if self._loop is None:
+            self._loop = asyncio.get_event_loop()
+
+        # ✅ 实时显示 LLM 输出（流式效果）
+        if isinstance(frame, TextFrame):
+            # 第一个 token 时打印提示
+            if not self._llm_started:
+                print("\n🤖 LLM: ", end="", flush=True)
+                self._llm_started = True
+            # 打印文本 token（不换行）
+            print(frame.text, end="", flush=True)
+
+        # 检测 LLM 响应结束（播放剩余缓冲）
+        if isinstance(frame, LLMFullResponseEndFrame):
+            # 结束时换行
+            if self._llm_started:
+                print("\n")  # 换行结束
+                self._llm_started = False
+
         # 响应官方中断帧，设置中断
         if isinstance(frame, InterruptionFrame):
             if self.is_speaking:
@@ -352,16 +379,16 @@ class PiperTTSProcessor(FrameProcessor):
                 self.interrupt()
             # 清空缓冲区
             self.sentence_buffer = ""
+            # 重置 LLM 输出标志
+            self._llm_started = False
             # 传递中断帧
             await self.push_frame(frame, direction)
             return
 
         # 检测 LLM 响应结束（播放剩余缓冲）
-        from pipecat.frames.frames import LLMFullResponseEndFrame
         if isinstance(frame, LLMFullResponseEndFrame):
             # 播放剩余的不完整句子
             if self.sentence_buffer.strip():
-                print(f"🔊 TTS 合成（剩余）: {self.sentence_buffer}")
                 await self._synthesize_and_push(self.sentence_buffer)
                 self.sentence_buffer = ""
 
@@ -384,8 +411,7 @@ class PiperTTSProcessor(FrameProcessor):
                     sentence = parts[0] + delimiter  # 包含标点符号
                     self.sentence_buffer = parts[1] if len(parts) > 1 else ""
 
-                    # 立即合成完整句子
-                    print(f"🔊 TTS 合成: {sentence.strip()}")
+                    # 立即合成完整句子（静默，只在需要时打印）
                     await self._synthesize_and_push(sentence.strip())
                     break
 
@@ -453,16 +479,14 @@ class PiperTTSProcessor(FrameProcessor):
                     )
 
                     # ✅ 推送到 Pipeline（让 transport.output() 播放）
-                    # 注意：这里需要使用同步方式推送（在线程池中）
-                    # 使用 asyncio.run_coroutine_threadsafe 在主事件循环中推送
-                    import asyncio
-                    loop = asyncio.get_event_loop()
-                    future = asyncio.run_coroutine_threadsafe(
-                        self.push_frame(audio_frame, FrameDirection.DOWNSTREAM),
-                        loop
-                    )
-                    # 等待推送完成
-                    future.result(timeout=1.0)
+                    # 使用保存的事件循环引用在主线程中推送
+                    if self._loop:
+                        future = asyncio.run_coroutine_threadsafe(
+                            self.push_frame(audio_frame, FrameDirection.DOWNSTREAM),
+                            self._loop
+                        )
+                        # 等待推送完成
+                        future.result(timeout=1.0)
 
                 return False  # 正常完成，未中断
 
@@ -606,53 +630,56 @@ class VisionProcessor(FrameProcessor):
             await self.push_frame(frame, direction)
             return
 
-        # ✅ 检查 context 中的最后一条用户消息（由 user_aggregator 添加）
-        if self.context.messages:
-            last_message = self.context.messages[-1]
+        # ✅ 只处理 OpenAILLMContextFrame（user_aggregator 推送的帧）
+        from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContextFrame
 
-            # 只处理用户消息
-            if last_message.get("role") == "user":
-                text_content = last_message.get("content", "")
+        if isinstance(frame, OpenAILLMContextFrame):
+            # 检查 context 中的最后一条用户消息
+            if self.context.messages:
+                last_message = self.context.messages[-1]
 
-                # ✅ 使用消息内容的 hash 作为唯一标识
-                message_id = hash(text_content)
+                # 只处理用户消息
+                if last_message.get("role") == "user":
+                    text_content = last_message.get("content", "")
 
-                # ✅ 检查是否已处理过这条消息
-                if message_id in self._processed_messages:
-                    # 已处理，跳过
-                    await self.push_frame(frame, direction)
-                    return
+                    # ✅ 使用消息内容的 hash 作为唯一标识
+                    message_id = hash(text_content)
 
-                if self._needs_vision(text_content):
-                    print(f"🔍 Vision 模式: {text_content}")
+                    # ✅ 检查是否已处理过这条消息
+                    if message_id in self._processed_messages:
+                        # 已处理，跳过
+                        await self.push_frame(frame, direction)
+                        return
 
-                    # ✅ 标记为已处理（在处理前，防止并发重复）
-                    self._processed_messages.add(message_id)
+                    if self._needs_vision(text_content):
+                        print(f"🔍 Vision 模式: {text_content}")
 
-                    try:
-                        # 异步截图
-                        img_bytes, size = await self._capture_screenshot_async()
+                        # ✅ 标记为已处理（在处理前，防止并发重复）
+                        self._processed_messages.add(message_id)
 
-                        # 调用 Vision API
-                        print(f"📸 调用 Vision API...")
-                        result = await self._call_vision_api(img_bytes, text_content)
+                        try:
+                            # 异步截图
+                            img_bytes, size = await self._capture_screenshot_async()
 
-                        print(f"📊 Vision 结果: {result}")
+                            # 调用 Vision API
+                            print(f"📸 调用 Vision API...")
+                            result = await self._call_vision_api(img_bytes, text_content)
 
-                        # ✅ 直接修改 context（添加 Vision 观察结果）
-                        # 方式1：作为 system 消息
-                        self.context.messages.append({
-                            "role": "system",
-                            "content": f"[视觉观察] {result}"
-                        })
+                            print(f"📊 Vision 结果: {result}")
 
-                        # 方式2：修改用户消息（包含 Vision 结果）
-                        # last_message["content"] = f"{text_content}\n\n[视觉观察] {result}"
+                            # ✅ 将 Vision 结果附加到最后一条 user 消息（而不是新增 system 消息）
+                            # 这样 LLM 知道需要基于这个回复
+                            last_message["content"] = f"{text_content}\n\n[视觉观察] {result}"
 
-                    except Exception as e:
-                        print(f"❌ Vision 处理失败: {e}")
-                        import traceback
-                        traceback.print_exc()
+                            # ✅ 推送新的 OpenAILLMContextFrame（触发 LLM 生成响应）
+                            print("✅ 推送更新后的 context 到 LLM...")
+                            await self.push_frame(OpenAILLMContextFrame(self.context), direction)
+                            return  # 不推送原来的帧
 
-        # ✅ 传递所有帧（不推送新 Frame）
+                        except Exception as e:
+                            print(f"❌ Vision 处理失败: {e}")
+                            import traceback
+                            traceback.print_exc()
+
+        # ✅ 传递所有其他帧
         await self.push_frame(frame, direction)

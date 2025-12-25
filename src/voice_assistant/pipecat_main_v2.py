@@ -231,7 +231,7 @@ async def create_pipecat_pipeline():
     print("✓ PyAudio Transport 已启动")
     print("✓ VAD + Turn Detection 已集成（智能判断对话完成）")
 
-    # 6. ✅ 构建 Pipeline（官方标准顺序）
+    # 6. ✅ 构建 Pipeline（官方标准顺序 + TTS 调整）
     print("\n⏳ 正在构建 Pipeline（官方架构）...")
 
     pipeline = Pipeline([
@@ -241,8 +241,8 @@ async def create_pipecat_pipeline():
         user_aggregator,                # 4. ✅ 添加用户消息到 context（紧跟 ASR）
         vision_proc,                    # 5. ✅ Vision（直接修改 context）
         llm,                            # 6. ✅ LLM 生成（已注册 MCP 函数）
-        assistant_aggregator,           # 7. ✅ 保存助手响应（紧跟 LLM）
-        tts_proc,                       # 8. ✅ TTS 合成（生成 OutputAudioRawFrame）
+        tts_proc,                       # 7. ✅ TTS 合成（在 aggregator 之前，接收 LLMTextFrame）
+        assistant_aggregator,           # 8. ✅ 保存助手响应（收集 LLMTextFrame 到 context）
         transport.output(),             # 9. ✅ 官方音频输出
     ])
 
@@ -250,15 +250,15 @@ async def create_pipecat_pipeline():
     print("\n" + "="*60)
     print("✓ Pipecat v2.2 启动完成（官方 VAD + Turn Detection）")
     print("="*60)
-    print("\n📋 Pipeline 结构（官方标准）:")
+    print("\n📋 Pipeline 结构（官方标准 + TTS 位置优化）:")
     print("   transport.input()      ✅ 官方音频输入 + VAD + Turn Detection")
     print("   → KWS                  (自定义：唤醒词检测)")
     print("   → ASR                  (自定义：本地识别)")
     print("   → user_aggregator      ✅ 添加用户消息")
     print("   → Vision               ✅ 直接修改 context")
     print("   → LLM                  ✅ 官方 LLM Service + Function Calling")
-    print("   → assistant_aggregator ✅ 保存助手响应（紧跟 LLM）")
-    print("   → TTS                  ✅ 生成 OutputAudioRawFrame")
+    print("   → TTS                  ✅ 接收 LLMTextFrame，生成 OutputAudioRawFrame")
+    print("   → assistant_aggregator ✅ 收集 LLMTextFrame 到 context")
     print("   → transport.output()   ✅ 官方音频输出")
     print("\n💡 架构改进（v2.2）:")
     print("   ✅ 符合 Pipecat 官方标准（BaseInputTransport/BaseOutputTransport）")
@@ -267,6 +267,7 @@ async def create_pipecat_pipeline():
     print("   ✅ VAD 处理在 BaseInputTransport 内部（标准化）")
     print("   ✅ Turn Detection 理解语言上下文（避免句子中间断）")
     print("   ✅ ASR 响应 UserStartedSpeakingFrame / UserStoppedSpeakingFrame")
+    print("   ✅ TTS 在 assistant_aggregator 之前（修复 LLMTextFrame 被吃掉问题）")
     print("   ✅ 支持 Turn Detection（可选）")
     print("   ✅ 易于切换 transport 和服务")
     print("\n💬 说出唤醒词开始对话...")
