@@ -4,6 +4,21 @@ import signal
 import sys
 from pathlib import Path
 
+# ✅ 在导入 Pipecat 之前配置日志
+import os
+os.environ["LOGURU_LEVEL"] = "ERROR"  # 只显示 ERROR 级别（隐藏 WARNING）
+
+from loguru import logger
+
+# ✅ 配置自己的日志输出
+logger.remove()  # 移除默认 handler
+logger.add(
+    sys.stderr,
+    level="INFO",  # 我们自己的日志显示 INFO
+    format="<green>{time:HH:mm:ss}</green> | <level>{level: <7}</level> | <level>{message}</level>",
+    filter=lambda record: not record["name"].startswith("pipecat")  # 过滤掉 pipecat 的日志
+)
+
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask, PipelineParams
@@ -58,17 +73,18 @@ async def create_pipecat_pipeline():
     ✅ Vision 直接修改 context（不推送新 Frame）
     """
     print("\n" + "="*60)
-    print("Pipecat 模式 - v2.2 (符合官方架构 + VAD)")
+    print("🎙️  中文语音助手 v2.2.1 - Pipecat 官方架构")
     print("="*60)
 
     # 1. 初始化现有组件
-    print("\n>> 正在加载模型...")
+    print("\n⏳ 加载模型...")
 
     # 创建 wake_word 系统（跳过 MCP 初始化）
     wake_system = SmartWakeWordSystem(enable_voice=False, enable_mcp=False)
+    print("✓ KWS/ASR 模型已加载")
 
     # 手动异步启动 MCP Servers
-    print("\n>> 正在启动 MCP Servers（异步模式）...")
+    print("⏳ 启动 MCP Servers...")
 
     from .mcp_client import MCPManager
     mcp = MCPManager()
@@ -83,28 +99,20 @@ async def create_pipecat_pipeline():
             success = await mcp.add_server_async(name, command, args, timeout)
             if success:
                 success_count += 1
-                print(f"  ✓ {name} MCP Server 启动成功")
         except Exception as e:
-            print(f"  ❌ {name} Server 启动异常: {e}")
+            print(f"  ❌ {name} Server 启动失败: {e}")
             continue
 
     if success_count > 0:
-        print(f"\n✅ 成功启动 {success_count}/{len(servers)} 个 MCP Server\n")
-
-        # 获取工具列表
         mcp_tools = await mcp.list_all_tools_async()
-        playwright_tools = [
-            tool for tool in mcp_tools
-            if tool.get("server") == "playwright"
-        ]
-        if playwright_tools:
-            print(f"  ✓ Playwright-MCP: {len(playwright_tools)} 个工具")
+        playwright_tools = [t for t in mcp_tools if t.get("server") == "playwright"]
+        print(f"✓ Playwright MCP 已启动（{len(playwright_tools)} 个工具）")
     else:
-        print(f"\n❌ 所有 MCP Server 启动失败\n")
+        print(f"❌ MCP Server 启动失败")
         raise RuntimeError("MCP Server 启动失败")
 
     # 2. 初始化 Qwen LLM Service
-    print("\n⏳ 正在初始化 Qwen LLM Service...")
+    print("⏳ 初始化 LLM Service...")
 
     llm = QwenLLMService(model="qwen-plus")
 
@@ -113,8 +121,6 @@ async def create_pipecat_pipeline():
 
     # 创建 Tools（OpenAI API 格式）
     tools = mcp_tools_to_openai_format(mcp_tools)
-
-    print(f"\n🔧 转换为 OpenAI 格式后: {len(tools)} 个工具")
 
     # 创建对话上下文
     messages = [
@@ -153,19 +159,14 @@ async def create_pipecat_pipeline():
 
     context = QwenLLMContext(messages, tools=tools)
 
-    print(f"\n📋 LLMContext 中的 tools: {len(context.tools) if context.tools else 0} 个")
-
     # 创建 Context Aggregators
     user_aggregator = OpenAIUserContextAggregator(context)
     assistant_aggregator = OpenAIAssistantContextAggregator(context)
 
-    print("✓ QwenLLMService 已初始化")
-    print("✓ MCP 函数已注册")
-    print("✓ OpenAIUserContextAggregator 已创建")
-    print("✓ OpenAIAssistantContextAggregator 已创建")
+    print(f"✓ LLM Service 已就绪（{len(tools)} 个工具）")
 
     # 3. 创建 Pipecat Processors
-    print("\n⏳ 正在创建 Pipecat Processors...")
+    print("⏳ 创建 Processors...")
 
     kws_proc = SherpaKWSProcessor(wake_system.kws_model)
     asr_proc = SherpaASRProcessor(wake_system.asr_model)
@@ -180,13 +181,10 @@ async def create_pipecat_pipeline():
     # TTS Processor（不传入 transport）
     tts_proc = PiperTTSProcessor(wake_system.agent.tts)
 
-    print("✓ KWS Processor 已创建")
-    print("✓ ASR Processor 已创建")
-    print("✓ Vision Processor 已创建（直接修改 context）")
-    print("✓ TTS Processor 已创建（生成 OutputAudioRawFrame）")
+    print("✓ Processors 已创建")
 
     # 4. ✅ 配置 Silero VAD（Pipecat 官方 VAD）
-    print("\n⏳ 配置 VAD + Turn Detection...")
+    print("⏳ 配置 VAD + Turn Detection...")
 
     # ✅ 使用 Pipecat 官方 Silero VAD + Smart Turn Detection
     # 根据官方文档：配合 Turn Detection 时使用 stop_secs=0.2
@@ -211,11 +209,10 @@ async def create_pipecat_pipeline():
         )
     )
 
-    print("✓ Silero VAD 已配置 (stop_secs=0.2)")
-    print("✓ Smart Turn v3 已配置（智能判断对话完成）")
+    print("✓ VAD + Turn Detection 已配置")
 
     # 5. ✅ 创建标准 PyAudioTransport（配置 VAD）
-    print("\n⏳ 正在创建 PyAudio Transport...")
+    print("⏳ 创建 PyAudio Transport...")
 
     transport = PyAudioTransport(
         sample_rate=16000,
@@ -228,11 +225,10 @@ async def create_pipecat_pipeline():
     )
     await transport.start()
 
-    print("✓ PyAudio Transport 已启动")
-    print("✓ VAD + Turn Detection 已集成（智能判断对话完成）")
+    print("✓ Transport 已启动")
 
     # 6. ✅ 构建 Pipeline（官方标准顺序 + TTS 调整）
-    print("\n⏳ 正在构建 Pipeline（官方架构）...")
+    print("⏳ 构建 Pipeline...")
 
     pipeline = Pipeline([
         transport.input(),              # 1. ✅ 官方音频输入（内置 VAD 处理）
@@ -248,31 +244,12 @@ async def create_pipecat_pipeline():
 
     print("✓ Pipeline 已构建")
     print("\n" + "="*60)
-    print("✓ Pipecat v2.2 启动完成（官方 VAD + Turn Detection）")
+    print("✅ 启动完成！")
     print("="*60)
-    print("\n📋 Pipeline 结构（官方标准 + TTS 位置优化）:")
-    print("   transport.input()      ✅ 官方音频输入 + VAD + Turn Detection")
-    print("   → KWS                  (自定义：唤醒词检测)")
-    print("   → ASR                  (自定义：本地识别)")
-    print("   → user_aggregator      ✅ 添加用户消息")
-    print("   → Vision               ✅ 直接修改 context")
-    print("   → LLM                  ✅ 官方 LLM Service + Function Calling")
-    print("   → TTS                  ✅ 接收 LLMTextFrame，生成 OutputAudioRawFrame")
-    print("   → assistant_aggregator ✅ 收集 LLMTextFrame 到 context")
-    print("   → transport.output()   ✅ 官方音频输出")
-    print("\n💡 架构改进（v2.2）:")
-    print("   ✅ 符合 Pipecat 官方标准（BaseInputTransport/BaseOutputTransport）")
-    print("   ✅ 集成 Silero VAD（快速检测语音开始/停止，stop_secs=0.2）")
-    print("   ✅ 集成 Smart Turn v3（智能判断对话完成，支持 23 种语言）")
-    print("   ✅ VAD 处理在 BaseInputTransport 内部（标准化）")
-    print("   ✅ Turn Detection 理解语言上下文（避免句子中间断）")
-    print("   ✅ ASR 响应 UserStartedSpeakingFrame / UserStoppedSpeakingFrame")
-    print("   ✅ TTS 在 assistant_aggregator 之前（修复 LLMTextFrame 被吃掉问题）")
-    print("   ✅ 支持 Turn Detection（可选）")
-    print("   ✅ 易于切换 transport 和服务")
     print("\n💬 说出唤醒词开始对话...")
-    print("   默认唤醒词: 小智、你好助手、智能助手")
-    print("   按 Ctrl+C 退出\n")
+    print("   唤醒词: 小智、你好助手、智能助手")
+    print("   按 Ctrl+C 退出")
+    print("")
 
     return pipeline, transport, wake_system, mcp
 
