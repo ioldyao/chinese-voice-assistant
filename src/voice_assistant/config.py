@@ -13,6 +13,17 @@ QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-plus")  # 默认值
 ALIYUN_APPKEY = os.getenv("ALIYUN_APPKEY")
 ALIYUN_TTS_URL = os.getenv("ALIYUN_TTS_URL", "https://nls-gateway-cn-shanghai.aliyuncs.com/rest/v1/tts/async")  # 默认阿里云 TTS URL
 
+# ==================== Vision 配置 - 从环境变量读取 ====================
+# 指定使用哪个 Vision 服务
+VISION_SERVICE = os.getenv("VISION_SERVICE", "moondream")  # 默认使用 moondream 本地模型
+
+# Moondream 本地模型配置
+MOONDREAM_USE_CPU = os.getenv("MOONDREAM_USE_CPU", "false").lower() == "true"
+
+# Qwen-VL API 配置
+QWEN_VL_API_URL = os.getenv("QWEN_VL_API_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+QWEN_VL_API_KEY = os.getenv("QWEN_VL_API_KEY", DASHSCOPE_API_KEY)  # 默认使用 DASHSCOPE_API_KEY
+
 # 路径配置
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 MODELS_DIR = PROJECT_ROOT / "models"

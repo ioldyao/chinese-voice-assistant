@@ -7,7 +7,7 @@ from ctypes import wintypes
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
-from PIL import ImageGrab
+from PIL import ImageGrab, Image
 
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.frames.frames import (
@@ -501,23 +501,38 @@ class PiperTTSProcessor(FrameProcessor):
 
 class VisionProcessor(FrameProcessor):
     """
-    Vision Processor - 符合 Pipecat 官方推荐模式
+    Vision Processor - 支持多种视觉模型的统一接口
 
     架构改进：
-    - ✅ 接收 LLMContext，直接修改 context（而不是推送新 Frame）
-    - ✅ 在 user_aggregator 之后运行（context 已包含用户消息）
-    - ✅ Vision 结果添加到 context，LLM 自动看到
-    - ✅ 无需推送额外 Frame，符合官方架构
+    - ✅ 支持多种视觉模型（Moondream 本地、Qwen-VL API 等）
+    - ✅ 通过 .env 配置切换模型
+    - ✅ 工厂模式动态创建服务
+    - ✅ 接收 LLMContext，直接修改 context
+    - ✅ 符合 Pipecat 官方架构
     """
 
-    def __init__(self, api_url: str, api_key: str, context):
+    def __init__(self, context, **vision_kwargs):
+        """
+        初始化 VisionProcessor
+
+        Args:
+            context: LLMContext 实例
+            **vision_kwargs: 传递给 VisionFactory 的参数
+                - service: 服务名称（moondream/qwen-vl-plus/qwen-vl-max）
+                - use_cpu: 是否使用 CPU（仅 Moondream）
+                - api_url: API URL（仅 Qwen-VL）
+                - api_key: API 密钥（仅 Qwen-VL）
+        """
         super().__init__()
-        self.api_url = api_url
-        self.api_key = api_key
         self.context = context  # LLMContext 实例
 
         # ✅ 追踪已处理的消息（避免重复处理）
         self._processed_messages = set()
+
+        # ✅ 使用工厂创建 Vision 服务
+        from .vision_services import create_vision_service
+        self.vision_service = create_vision_service(**vision_kwargs)
+        print(f"✓ Vision 服务: {self.vision_service.get_model_name()}")
 
         # Vision 关键词
         self.vision_keywords = [
@@ -538,11 +553,10 @@ class VisionProcessor(FrameProcessor):
         # 视觉关键词
         return any(kw in text for kw in self.vision_keywords)
 
-    async def _capture_screenshot_async(self) -> tuple[bytes, tuple[int, int]]:
-        """异步截图，返回 (图片字节, 尺寸)"""
+    async def _capture_screenshot_async(self):
+        """异步截图，返回 PIL Image 对象"""
         def capture():
             from PIL import ImageGrab
-            import io
 
             # 尝试窗口截图
             try:
@@ -576,50 +590,26 @@ class VisionProcessor(FrameProcessor):
                 # 降级到全屏
                 screenshot = ImageGrab.grab()
 
-            # 转换为字节（内存操作）
-            img_byte_arr = io.BytesIO()
-            screenshot.save(img_byte_arr, format='PNG')
-            return img_byte_arr.getvalue(), screenshot.size
+            return screenshot
 
         return await asyncio.to_thread(capture)
 
-    async def _call_vision_api(self, img_bytes: bytes, question: str) -> str:
-        """调用 Qwen-VL-Max API（异步）"""
-        import httpx
-        import base64
+    async def _call_vision_service(self, image: Image, question: str) -> str:
+        """
+        调用 Vision 服务分析图片（统一接口）
 
-        img_base64 = base64.b64encode(img_bytes).decode()
+        Args:
+            image: PIL Image 对象
+            question: 用户问题（中文）
 
+        Returns:
+            str: 图片描述结果
+        """
         try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                response = await client.post(
-                    f"{self.api_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": "qwen-vl-max",
-                        "messages": [{
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": question},
-                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}}
-                            ]
-                        }],
-                        "max_tokens": 2000,
-                        "temperature": 0.7
-                    }
-                )
-
-            if response.status_code == 200:
-                result = response.json()
-                return result["choices"][0]["message"]["content"]
-            else:
-                return f"API错误 {response.status_code}: {response.text}"
-
+            result = await self.vision_service.analyze_image(image, question)
+            return result
         except Exception as e:
-            return f"Vision API 调用失败: {str(e)}"
+            return f"Vision 服务处理失败: {str(e)}"
 
     async def process_frame(self, frame, direction):
         """处理帧"""
@@ -659,11 +649,11 @@ class VisionProcessor(FrameProcessor):
 
                         try:
                             # 异步截图
-                            img_bytes, size = await self._capture_screenshot_async()
+                            image = await self._capture_screenshot_async()
 
-                            # 调用 Vision API
-                            print(f"📸 调用 Vision API...")
-                            result = await self._call_vision_api(img_bytes, text_content)
+                            # 调用 Vision 服务（支持多模型）
+                            print(f"📸 调用 Vision 服务: {self.vision_service.get_model_name()}...")
+                            result = await self._call_vision_service(image, text_content)
 
                             print(f"📊 Vision 结果: {result}")
 

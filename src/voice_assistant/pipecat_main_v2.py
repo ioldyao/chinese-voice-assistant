@@ -171,11 +171,12 @@ async def create_pipecat_pipeline():
     kws_proc = SherpaKWSProcessor(wake_system.kws_model)
     asr_proc = SherpaASRProcessor(wake_system.asr_model)
 
-    # Vision Processor（传入 context）
+    # Vision Processor（使用工厂模式，支持多模型）
+    # 可通过 .env 配置切换：VISION_SERVICE=moondream/qwen-vl-plus/qwen-vl-max
     vision_proc = VisionProcessor(
-        api_url=wake_system.agent.api_url,
-        api_key=wake_system.agent.api_key,
-        context=context  # ✅ 传入 context
+        context=context,  # ✅ 传入 context
+        # service="moondream",  # 可选：显式指定服务（否则从 .env 读取）
+        # use_cpu=False         # 可选：是否使用 CPU（仅 Moondream）
     )
 
     # TTS Processor（不传入 transport）

@@ -36,10 +36,16 @@
   - **RealtimeTTS** - 流式实时播放 🎵
   - **MeloTTS** - 中英文混合支持 🌐
 
-- **👁️ 视觉理解**: Qwen-VL-Max 多模态理解
-  - 屏幕内容分析
-  - 支持窗口/全屏截图
-  - **完全异步化**（httpx + aiofiles）
+- **👁️ 视觉理解**: 多模型支持（可配置切换）
+  - **Moondream（本地）** - 完全离线，保护隐私
+    - 硬件加速（CUDA/MPS/CPU）
+    - 图片自动优化（缩放、格式转换）
+    - 中英文智能提示
+  - **Qwen-VL-Plus（API）** - 高精度识别
+  - **Qwen-VL-Max（API）** - 最高精度
+  - 通过 `.env` 一键切换模型
+  - 统一接口，工厂模式设计
+  - **完全异步化**（asyncio + PIL）
 
 ### 🎨 技术亮点（混合架构）
 - ⚡ **官方 LLM Service** - QwenLLMService（继承 OpenAILLMService）✨
@@ -47,7 +53,7 @@
 - 🔄 **Function Calling** - MCP 工具无缝集成（官方机制）✨
 - 🚀 **保留自定义优势** - KWS + ASR + Piper TTS（本地、免费）
 - 🛡️ **完全异步架构** - 纯异步，无线程开销
-- 👁️ **Vision 异步集成** - 视觉理解完全异步化
+- 👁️ **多模型 Vision 系统** - 本地/云端模型可配置切换
 - 🧠 **Smart Turn v3** - 智能对话完成检测（支持 23 种语言）✨
   - ✅ 理解语言上下文（语法、语调、语义）
   - ✅ 避免句子中间被打断
@@ -62,12 +68,13 @@
 - ✅ KWS 唤醒词检测（Sherpa-ONNX，本地）
 - ✅ ASR 语音识别（Sherpa-ONNX，本地）
 - ✅ Piper TTS（本地，超低延迟）
-- ✅ Qwen Vision（保持现有 API）
+- ✅ 多模型 Vision（Moondream 本地 + Qwen-VL API，可切换）
 
 **改用官方（享受生态）**：
 - ✨ LLM Service（QwenLLMService）
 - ✨ Context Aggregator（自动管理历史）
 - ✨ Function Calling（MCP 工具集成）
+- ✨ VAD + Smart Turn（Silero VAD + Smart Turn v3）
 
 ---
 
@@ -132,6 +139,17 @@ DASHSCOPE_API_KEY=your-api-key-here
 DASHSCOPE_API_URL=http://localhost:4000/v1
 QWEN_MODEL=qwen-plus
 
+# ==================== Vision 服务配置 ====================
+# 指定使用哪个 Vision 服务：moondream | qwen-vl-plus | qwen-vl-max
+VISION_SERVICE=moondream
+
+# Moondream 本地模型配置
+MOONDREAM_USE_CPU=false
+
+# Qwen-VL API 配置（使用 qwen-vl-plus 或 qwen-vl-max 时需要）
+QWEN_VL_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_VL_API_KEY=your-dashscope-api-key-here
+
 # 阿里云 TTS 配置（可选）
 ALIYUN_APPKEY=your-appkey-here
 ALIYUN_TTS_URL=https://nls-gateway-cn-shanghai.aliyuncs.com/rest/v1/tts/async
@@ -164,6 +182,47 @@ QWEN_MODEL=Local1-Qwen3-235B  # 你的模型名称
 x iǎo zh ì @小智
 n ǐ h ǎo zh ù sh ǒu @你好助手
 zh ì n éng zh ù sh ǒu @智能助手
+```
+
+### Vision 模型配置
+
+本项目支持多种 Vision 模型，可通过 `.env` 配置一键切换：
+
+**方案 1：Moondream 本地模型（推荐，隐私优先）**
+```bash
+VISION_SERVICE=moondream
+MOONDREAM_USE_CPU=false  # 使用 GPU 加速（自动检测最佳设备）
+```
+- ✅ 完全本地化，无需 API 调用
+- ✅ 完全离线，保护隐私
+- ✅ 无 API 费用
+- ⚠️ 首次运行会下载模型（~4GB）
+- ⚠️ 对中文支持一般（自动翻译为英文提示）
+
+**方案 2：Qwen-VL-Plus（高精度）**
+```bash
+VISION_SERVICE=qwen-vl-plus
+QWEN_VL_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_VL_API_KEY=your-dashscope-api-key
+```
+- ✅ 高精度识别
+- ✅ 原生中文支持
+- ⚠️ 需要 API 调用费用
+
+**方案 3：Qwen-VL-Max（最高精度）**
+```bash
+VISION_SERVICE=qwen-vl-max
+QWEN_VL_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_VL_API_KEY=your-dashscope-api-key
+```
+- ✅ 最高精度识别
+- ✅ 复杂场景理解能力强
+- ⚠️ 需要 API 调用费用（比 Plus 稍贵）
+
+**测试 Vision 模型：**
+```bash
+# 测试多模型切换
+uv run test_vision_models.py
 ```
 
 ---
