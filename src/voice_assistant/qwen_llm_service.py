@@ -243,23 +243,23 @@ class QwenLLMService(OpenAILLMService):
         print(f"  - API: {base_url}")
         print(f"  - 思考模式: 已禁用")
 
-    def _get_messages(self, context: OpenAILLMContext) -> list:
+    def build_chat_completion_params(self, params_from_context) -> dict:
         """
-        获取 messages 并修正格式（修复 tool_calls 时缺少 content 的问题）
+        构建请求参数并修正消息格式
 
-        本地 Qwen 要求：assistant message 有 tool_calls 时必须包含 content 字段
-        （即使是空字符串也要有）
+        修复：本地 Qwen 要求 assistant message 有 tool_calls 时必须包含 content 字段
         """
-        # 调用父类方法获取原始 messages
-        messages = super()._get_messages(context)
+        # 调用父类方法获取原始参数
+        params = super().build_chat_completion_params(params_from_context)
 
-        # 修正所有 assistant message：确保有 tool_calls 时也有 content
-        for msg in messages:
-            if msg.get("role") == "assistant" and "tool_calls" in msg:
-                if "content" not in msg:
-                    msg["content"] = ""  # 添加空 content
+        # 修正 messages：确保 assistant message 有 tool_calls 时也有 content
+        if "messages" in params:
+            for msg in params["messages"]:
+                if msg.get("role") == "assistant" and "tool_calls" in msg:
+                    if "content" not in msg:
+                        msg["content"] = ""  # 添加空 content
 
-        return messages
+        return params
 
 
 class QwenLLMContext(OpenAILLMContext):

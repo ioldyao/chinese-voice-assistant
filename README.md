@@ -117,21 +117,40 @@ python download_piper_model.py
 
 ## 🔧 配置
 
-### API Keys
-在 `src/voice_assistant/config.py` 中配置 API Key：
+### API Keys（使用 .env 文件）
 
-```python
-# 方式1: 直接修改配置文件
-DASHSCOPE_API_KEY = "your-api-key-here"
-ALIYUN_APPKEY = "your-app-key-here"
-
-# 方式2: 使用环境变量（推荐）
-export DASHSCOPE_API_KEY="your-api-key-here"
-export ALIYUN_APPKEY="your-app-key-here"
+1. 复制示例配置文件：
+```bash
+cp .env.example .env
 ```
+
+2. 编辑 `.env` 文件，填入你的 API 配置：
+```bash
+# Qwen LLM 配置
+# 本地部署的 Qwen 模型服务器
+DASHSCOPE_API_KEY=your-api-key-here
+DASHSCOPE_API_URL=http://localhost:4000/v1
+QWEN_MODEL=qwen-plus
+
+# 阿里云 TTS 配置（可选）
+ALIYUN_APPKEY=your-appkey-here
+ALIYUN_TTS_URL=https://nls-gateway-cn-shanghai.aliyuncs.com/rest/v1/tts/async
+```
+
+**重要提示**：
+- ✅ `.env` 文件已被 `.gitignore` 忽略，不会被提交到 git
+- ✅ 团队成员各自使用自己的 `.env` 配置
+- ✅ `.env.example` 作为配置模板（已提交到 git）
 
 获取 API Key：
 - [阿里云 DashScope](https://dashscope.console.aliyun.com/)
+
+### 本地 Qwen 部署（推荐）
+如果你使用本地部署的 Qwen 模型，修改 `.env`：
+```bash
+DASHSCOPE_API_URL=http://your-server-ip:port/v1
+QWEN_MODEL=Local1-Qwen3-235B  # 你的模型名称
+```
 
 ### 唤醒词配置
 编辑 `config/keywords.txt`，使用以下格式：
@@ -588,6 +607,53 @@ pip install "pipecat-ai[local-smart-turn-v3]"
 - ✅ Pipeline 清理机制更健壮
 - ✅ 退出流程完全异步，无死锁风险
 - ✅ 代码增加 11%（~2,833 → ~3,148 行，主要是新增 Transport 和 VAD）
+
+---
+
+### v2.2.1 - 环境变量配置 + LLM 修复（2025-12-25）
+
+#### ✨ 新增特性
+1. **环境变量配置管理** - 安全的 API 密钥管理
+   - 使用 `.env` 文件管理所有 API 配置（DASHSCOPE_API_KEY、DASHSCOPE_API_URL、QWEN_MODEL、ALIYUN_APPKEY等）
+   - `.env` 文件被 `.gitignore` 忽略，不会泄露密钥
+   - 提供 `.env.example` 作为配置模板
+   - 支持团队成员各自使用独立配置
+   - 使用 `python-dotenv` 自动加载环境变量
+
+2. **Qwen3 优化** - 提升响应速度和稳定性
+   - 禁用 Qwen3 思考模式（`chat_template_kwargs: {enable_thinking: false}`）
+   - 通过 `extra.body` 传递模型特殊参数
+   - 保持与 OpenAI API 的完全兼容性
+
+#### 🐛 Bug 修复
+1. **LLM tool_calls 格式修复** - 修复 TTS 无输出问题
+   - 修复 assistant message 缺少 `content` 字段导致 400 错误
+   - 本地 Qwen 严格要求 tool_calls 时必须包含 `content`（即使为空）
+   - 重写 `build_chat_completion_params()` 方法自动修正消息格式
+   - 修复后 LLM 能正常输出文本回复，TTS 恢复工作
+   - 错误示例：`{'role': 'assistant', 'tool_calls': [...]}` ❌
+   - 正确格式：`{'role': 'assistant', 'content': '', 'tool_calls': [...]}` ✅
+
+2. **TTS 音频输出修复** - 正确实现 Pipecat 音频输出接口
+   - 实现 `write_audio_frame()` 方法（BaseOutputTransport 期望的接口）
+   - 修复 OutputAudioRawFrame 的 destination 注册问题
+   - 音频帧现在正确通过 MediaSender 流向输出设备
+   - 移除手动 process_frame 处理，使用官方 MediaSender 机制
+
+#### 🔧 技术改进
+- ✅ 环境变量管理（python-dotenv）
+- ✅ 敏感配置与代码分离
+- ✅ LLM 消息格式自动修正
+- ✅ Qwen3 特殊参数支持
+- ✅ 符合 Pipecat BaseOutputTransport 标准接口
+- ✅ 代码更安全、更规范、更易维护
+
+#### 📝 修改文件
+- `.env.example` - 配置模板（新增）
+- `src/voice_assistant/config.py` - 使用环境变量
+- `src/voice_assistant/qwen_llm_service.py` - LLM 格式修正 + Qwen3 参数
+- `src/voice_assistant/pyaudio_transport.py` - 实现 write_audio_frame()
+- `pyproject.toml` - 添加 python-dotenv 依赖
 
 ---
 

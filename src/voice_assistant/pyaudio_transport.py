@@ -105,23 +105,22 @@ class PyAudioOutputTransport(BaseOutputTransport):
         super().__init__(params, **kwargs)
         self.transport = transport
 
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        """处理帧"""
-        await super().process_frame(frame, direction)
+    async def write_audio_frame(self, frame: OutputAudioRawFrame):
+        """
+        写入音频帧到输出设备（被 MediaSender 调用）
 
-        # 播放音频帧
-        if isinstance(frame, OutputAudioRawFrame):
-            try:
-                # 异步播放（不阻塞 Pipeline）
-                await asyncio.to_thread(
-                    self.transport.output_stream.write,
-                    frame.audio
-                )
-            except Exception as e:
-                print(f"❌ 音频播放错误: {e}")
-
-        # 传递所有帧（用于后续处理器，如 context_aggregator）
-        await self.push_frame(frame, direction)
+        这是 BaseOutputTransport 期望的接口方法
+        """
+        print(f"🔊 PyAudioOutput 收到音频帧: {len(frame.audio)} bytes, {frame.sample_rate}Hz")
+        try:
+            # 异步播放（不阻塞 Pipeline）
+            await asyncio.to_thread(
+                self.transport.output_stream.write,
+                frame.audio
+            )
+            print(f"✓ 音频播放完成")
+        except Exception as e:
+            print(f"❌ 音频播放错误: {e}")
 
 
 
