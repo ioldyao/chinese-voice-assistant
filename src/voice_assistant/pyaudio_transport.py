@@ -104,6 +104,7 @@ class PyAudioOutputTransport(BaseOutputTransport):
     def __init__(self, transport: "PyAudioTransport", params: TransportParams, **kwargs):
         super().__init__(params, **kwargs)
         self.transport = transport
+        self._first_audio = True  # 首次播放标志
 
     async def write_audio_frame(self, frame: OutputAudioRawFrame):
         """
@@ -111,16 +112,21 @@ class PyAudioOutputTransport(BaseOutputTransport):
 
         这是 BaseOutputTransport 期望的接口方法
         """
-        print(f"🔊 PyAudioOutput 收到音频帧: {len(frame.audio)} bytes, {frame.sample_rate}Hz")
         try:
+            # 首次播放时提示
+            if self._first_audio:
+                print(f"🔊 开始播放 TTS 音频 ({frame.sample_rate}Hz)")
+                self._first_audio = False
+
             # 异步播放（不阻塞 Pipeline）
             await asyncio.to_thread(
                 self.transport.output_stream.write,
                 frame.audio
             )
-            print(f"✓ 音频播放完成")
         except Exception as e:
             print(f"❌ 音频播放错误: {e}")
+            # 重置标志，以便下次播放时重新提示
+            self._first_audio = True
 
 
 
