@@ -9,15 +9,13 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat.frames.frames import StartFrame, CancelFrame
 
-# ✅ 导入 VAD 相关模块
+# ✅ 导入 VAD 相关模块（Pipecat 官方）
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.transports.base_transport import TransportParams
 
-# 导入标准 PyAudio Transport
+# 导入标准 PyAudio Transport（v2.2 - 支持 VAD）
 from .pyaudio_transport import PyAudioTransport
-
-# 导入 VAD Processor
-from .vad_processor import SileroVADProcessor
 
 # 导入适配器（已修复）
 from .pipecat_adapters import (
@@ -60,17 +58,17 @@ async def create_pipecat_pipeline():
     ✅ Vision 直接修改 context（不推送新 Frame）
     """
     print("\n" + "="*60)
-    print("🚀 Pipecat 模式 - v2.0 (符合官方架构)")
+    print("Pipecat 模式 - v2.2 (符合官方架构 + VAD)")
     print("="*60)
 
     # 1. 初始化现有组件
-    print("\n⏳ 正在加载模型...")
+    print("\n>> 正在加载模型...")
 
     # 创建 wake_word 系统（跳过 MCP 初始化）
     wake_system = SmartWakeWordSystem(enable_voice=False, enable_mcp=False)
 
     # 手动异步启动 MCP Servers
-    print("\n⏳ 正在启动 MCP Servers（异步模式）...")
+    print("\n>> 正在启动 MCP Servers（异步模式）...")
 
     from .mcp_client import MCPManager
     mcp = MCPManager()
@@ -187,53 +185,73 @@ async def create_pipecat_pipeline():
     print("✓ Vision Processor 已创建（直接修改 context）")
     print("✓ TTS Processor 已创建（生成 OutputAudioRawFrame）")
 
-    # 4. ✅ 创建 Pipecat VAD Analyzer（暂时禁用）
-    print("\n⏳ VAD 配置...")
+    # 4. ✅ 配置 Silero VAD（Pipecat 官方 VAD）
+    print("\n⏳ 配置 VAD + Turn Detection...")
 
-    # ⚠️ 暂时禁用 VAD，等待后续优化
-    # vad_analyzer = SileroVADAnalyzer(
-    #     params=VADParams(
-    #         confidence=0.7,
-    #         start_secs=0.2,
-    #         stop_secs=0.8,
-    #         min_volume=0.6,
-    #     )
-    # )
-    # vad_processor = SileroVADProcessor(vad_analyzer)
-    # print("✓ Silero VAD 已配置")
+    # ✅ 使用 Pipecat 官方 Silero VAD + Smart Turn Detection
+    # 根据官方文档：配合 Turn Detection 时使用 stop_secs=0.2
+    vad_analyzer = SileroVADAnalyzer(
+        params=VADParams(
+            confidence=0.7,      # VAD 置信度阈值
+            start_secs=0.2,      # 确认开始说话的时间（快速响应）
+            stop_secs=0.2,       # 快速检测停顿（Turn Detection 会判断是否完成）
+            min_volume=0.6,      # 最小音量阈值
+        )
+    )
 
-    print("⚠️ VAD 暂时禁用（使用 ASR 内部 VAD）")
+    # ✅ 添加 Smart Turn Detection（智能判断对话是否完成）
+    from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+    from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 
-    # 5. ✅ 创建标准 PyAudioTransport
+    turn_analyzer = LocalSmartTurnAnalyzerV3(
+        params=SmartTurnParams(
+            min_turn_duration_secs=1.0,      # 最短对话时长
+            max_silence_secs=2.0,            # 最大停顿时间（incomplete 时）
+            confidence_threshold=0.7         # 检测置信度
+        )
+    )
+
+    print("✓ Silero VAD 已配置 (stop_secs=0.2)")
+    print("✓ Smart Turn v3 已配置（智能判断对话完成）")
+
+    # 5. ✅ 创建标准 PyAudioTransport（配置 VAD）
     print("\n⏳ 正在创建 PyAudio Transport...")
 
-    transport = PyAudioTransport(sample_rate=16000)
+    transport = PyAudioTransport(
+        sample_rate=16000,
+        params=TransportParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            vad_analyzer=vad_analyzer,      # ✅ 启用 Silero VAD
+            turn_analyzer=turn_analyzer,    # ✅ 启用 Smart Turn Detection
+        )
+    )
     await transport.start()
 
     print("✓ PyAudio Transport 已启动")
+    print("✓ VAD + Turn Detection 已集成（智能判断对话完成）")
 
     # 6. ✅ 构建 Pipeline（官方标准顺序）
     print("\n⏳ 正在构建 Pipeline（官方架构）...")
 
     pipeline = Pipeline([
-        transport.input(),              # 1. ✅ 官方音频输入
-        # vad_processor,                # 2. ✅ VAD 检测（暂时禁用）
-        kws_proc,                       # 3. KWS 唤醒词检测
-        asr_proc,                       # 4. ASR 识别
-        user_aggregator,                # 5. ✅ 添加用户消息到 context（紧跟 ASR）
-        vision_proc,                    # 6. ✅ Vision（直接修改 context）
-        llm,                            # 7. ✅ LLM 生成（已注册 MCP 函数）
-        assistant_aggregator,           # 8. ✅ 保存助手响应（紧跟 LLM）
-        tts_proc,                       # 9. ✅ TTS 合成（生成 OutputAudioRawFrame）
-        transport.output(),             # 10. ✅ 官方音频输出
+        transport.input(),              # 1. ✅ 官方音频输入（内置 VAD 处理）
+        kws_proc,                       # 2. KWS 唤醒词检测
+        asr_proc,                       # 3. ASR 识别（响应 VAD frames）
+        user_aggregator,                # 4. ✅ 添加用户消息到 context（紧跟 ASR）
+        vision_proc,                    # 5. ✅ Vision（直接修改 context）
+        llm,                            # 6. ✅ LLM 生成（已注册 MCP 函数）
+        assistant_aggregator,           # 7. ✅ 保存助手响应（紧跟 LLM）
+        tts_proc,                       # 8. ✅ TTS 合成（生成 OutputAudioRawFrame）
+        transport.output(),             # 9. ✅ 官方音频输出
     ])
 
     print("✓ Pipeline 已构建")
     print("\n" + "="*60)
-    print("✓ Pipecat v2.0 启动完成（官方架构）")
+    print("✓ Pipecat v2.2 启动完成（官方 VAD + Turn Detection）")
     print("="*60)
     print("\n📋 Pipeline 结构（官方标准）:")
-    print("   transport.input()      ✅ 官方音频输入")
+    print("   transport.input()      ✅ 官方音频输入 + VAD + Turn Detection")
     print("   → KWS                  (自定义：唤醒词检测)")
     print("   → ASR                  (自定义：本地识别)")
     print("   → user_aggregator      ✅ 添加用户消息")
@@ -242,12 +260,14 @@ async def create_pipecat_pipeline():
     print("   → assistant_aggregator ✅ 保存助手响应（紧跟 LLM）")
     print("   → TTS                  ✅ 生成 OutputAudioRawFrame")
     print("   → transport.output()   ✅ 官方音频输出")
-    print("\n💡 架构改进:")
-    print("   ✅ 符合 Pipecat 官方标准")
-    print("   ✅ 使用标准 Transport 接口")
-    print("   ✅ assistant_aggregator 紧跟 LLM")
-    print("   ✅ Vision 直接修改 context（无额外 Frame）")
-    print("   ✅ TTS 生成标准 Frame（不直接播放）")
+    print("\n💡 架构改进（v2.2）:")
+    print("   ✅ 符合 Pipecat 官方标准（BaseInputTransport/BaseOutputTransport）")
+    print("   ✅ 集成 Silero VAD（快速检测语音开始/停止，stop_secs=0.2）")
+    print("   ✅ 集成 Smart Turn v3（智能判断对话完成，支持 23 种语言）")
+    print("   ✅ VAD 处理在 BaseInputTransport 内部（标准化）")
+    print("   ✅ Turn Detection 理解语言上下文（避免句子中间断）")
+    print("   ✅ ASR 响应 UserStartedSpeakingFrame / UserStoppedSpeakingFrame")
+    print("   ✅ 支持 Turn Detection（可选）")
     print("   ✅ 易于切换 transport 和服务")
     print("\n💬 说出唤醒词开始对话...")
     print("   默认唤醒词: 小智、你好助手、智能助手")

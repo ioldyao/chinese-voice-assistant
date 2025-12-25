@@ -1,32 +1,35 @@
-"""PyAudio Transport - 标准 Pipecat Transport 实现"""
+"""PyAudio Transport - 标准 Pipecat Transport 实现（符合官方架构 v2）"""
 import asyncio
 import numpy as np
 import pyaudio
 from typing import Optional
 
-from pipecat.transports.base_transport import BaseTransport
+from pipecat.transports.base_transport import BaseTransport, TransportParams
+from pipecat.transports.base_input import BaseInputTransport
+from pipecat.transports.base_output import BaseOutputTransport
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.frames.frames import (
     Frame,
     AudioRawFrame,
+    InputAudioRawFrame,
     OutputAudioRawFrame,
     StartFrame,
     CancelFrame,
 )
 
 
-class PyAudioInputProcessor(FrameProcessor):
+class PyAudioInputTransport(BaseInputTransport):
     """
-    PyAudio 音频输入处理器
+    PyAudio 音频输入处理器（符合 Pipecat 官方架构）
 
-    符合 Pipecat 标准：
-    - 从麦克风读取音频
-    - 生成 AudioRawFrame
-    - 推送到 Pipeline
+    继承 BaseInputTransport，自动获得：
+    - VAD 支持（通过 TransportParams.vad_analyzer）
+    - Turn Detection 支持
+    - 标准音频流处理
     """
 
-    def __init__(self, transport: "PyAudioTransport"):
-        super().__init__()
+    def __init__(self, transport: "PyAudioTransport", params: TransportParams, **kwargs):
+        super().__init__(params, **kwargs)
         self.transport = transport
         self._running = False
         self._input_task: Optional[asyncio.Task] = None
@@ -35,11 +38,18 @@ class PyAudioInputProcessor(FrameProcessor):
         """处理帧"""
         await super().process_frame(frame, direction)
 
-        # 启动音频输入
+        # ✅ 关键修复：在 StartFrame 后调用 set_transport_ready()
+        # 这会创建 _audio_task，启动 VAD 处理循环
         if isinstance(frame, StartFrame):
+            # BaseInputTransport 已经处理了 StartFrame（推送帧 + 调用 start()）
+            # 现在我们需要启动音频输入循环
             self._running = True
+
+            # ✅ 调用父类方法创建 _audio_task（VAD 处理循环）
+            await self.set_transport_ready(frame)
+
+            # 启动我们的音频读取循环
             self._input_task = asyncio.create_task(self._audio_input_loop())
-            await self.push_frame(frame, direction)
 
         # 停止音频输入
         elif isinstance(frame, CancelFrame):
@@ -50,11 +60,7 @@ class PyAudioInputProcessor(FrameProcessor):
                     await self._input_task
                 except asyncio.CancelledError:
                     pass
-            await self.push_frame(frame, direction)
-
-        else:
-            # 其他帧直接传递
-            await self.push_frame(frame, direction)
+            # BaseInputTransport 已经处理了 CancelFrame
 
     async def _audio_input_loop(self):
         """持续读取音频并推送到 Pipeline"""
@@ -67,15 +73,16 @@ class PyAudioInputProcessor(FrameProcessor):
                     exception_on_overflow=False
                 )
 
-                # 创建标准 AudioRawFrame
-                frame = AudioRawFrame(
+                # ✅ 创建标准 InputAudioRawFrame
+                frame = InputAudioRawFrame(
                     audio=audio_bytes,
                     sample_rate=self.transport.sample_rate,
                     num_channels=self.transport.channels
                 )
 
-                # 推送到 Pipeline（DOWNSTREAM）
-                await self.push_frame(frame, FrameDirection.DOWNSTREAM)
+                # ✅ 关键修复：使用 BaseInputTransport 的 push_audio_frame
+                # 这会把音频放入队列，_audio_task_handler 会处理 VAD
+                await self.push_audio_frame(frame)
 
         except asyncio.CancelledError:
             pass
@@ -83,18 +90,19 @@ class PyAudioInputProcessor(FrameProcessor):
             print(f"❌ 音频输入错误: {e}")
 
 
-class PyAudioOutputProcessor(FrameProcessor):
-    """
-    PyAudio 音频输出处理器
 
-    符合 Pipecat 标准：
+class PyAudioOutputTransport(BaseOutputTransport):
+    """
+    PyAudio 音频输出处理器（符合 Pipecat 官方架构）
+
+    继承 BaseOutputTransport：
     - 接收 OutputAudioRawFrame
     - 播放到扬声器
     - 不生成新 Frame（Pipeline 终点）
     """
 
-    def __init__(self, transport: "PyAudioTransport"):
-        super().__init__()
+    def __init__(self, transport: "PyAudioTransport", params: TransportParams, **kwargs):
+        super().__init__(params, **kwargs)
         self.transport = transport
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
@@ -116,15 +124,34 @@ class PyAudioOutputProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+
 class PyAudioTransport(BaseTransport):
     """
-    PyAudio Transport - 符合 Pipecat 标准接口
+    PyAudio Transport - 符合 Pipecat 官方架构 v2
+
+    改进：
+    - ✅ 接受 TransportParams（支持 VAD、Turn Detection）
+    - ✅ Input/Output 继承 BaseInputTransport/BaseOutputTransport
+    - ✅ 自动处理 VAD（通过 BaseInputTransport）
 
     用法：
-        transport = PyAudioTransport(sample_rate=16000)
+        from pipecat.transports.base_transport import TransportParams
+        from pipecat.audio.vad.silero import SileroVADAnalyzer
+        from pipecat.audio.vad.vad_analyzer import VADParams
+
+        transport = PyAudioTransport(
+            sample_rate=16000,
+            params=TransportParams(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                vad_analyzer=SileroVADAnalyzer(
+                    params=VADParams(stop_secs=0.8)
+                )
+            )
+        )
 
         pipeline = Pipeline([
-            transport.input(),    # 音频输入
+            transport.input(),    # 自动处理 VAD
             # ... 处理器 ...
             transport.output(),   # 音频输出
         ])
@@ -135,33 +162,42 @@ class PyAudioTransport(BaseTransport):
         sample_rate: int = 16000,
         channels: int = 1,
         chunk_size: int = 512,
+        params: TransportParams = None,
     ):
-        # ✅ BaseTransport 只接受 name, input_name, output_name 参数
-        super().__init__()
+        # ✅ BaseTransport 只接受 name 参数
+        super().__init__(name="PyAudioTransport")
 
         self.sample_rate = sample_rate
         self.channels = channels
         self.chunk_size = chunk_size
+
+        # ✅ 保存 params（或使用默认值）
+        self._params = params or TransportParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+        )
 
         # PyAudio 实例
         self.p = pyaudio.PyAudio()
         self.input_stream: Optional[pyaudio.Stream] = None
         self.output_stream: Optional[pyaudio.Stream] = None
 
-        # 处理器（延迟创建）
-        self._input_processor: Optional[PyAudioInputProcessor] = None
-        self._output_processor: Optional[PyAudioOutputProcessor] = None
+        # ✅ 创建 input/output processors 并传递 params
+        self._input_processor: Optional[PyAudioInputTransport] = None
+        self._output_processor: Optional[PyAudioOutputTransport] = None
 
     def input(self) -> FrameProcessor:
         """返回音频输入处理器（符合 Pipecat 标准）"""
         if not self._input_processor:
-            self._input_processor = PyAudioInputProcessor(self)
+            # ✅ 传递 params 给 BaseInputTransport
+            self._input_processor = PyAudioInputTransport(self, self._params)
         return self._input_processor
 
     def output(self) -> FrameProcessor:
         """返回音频输出处理器（符合 Pipecat 标准）"""
         if not self._output_processor:
-            self._output_processor = PyAudioOutputProcessor(self)
+            # ✅ 传递 params 给 BaseOutputTransport
+            self._output_processor = PyAudioOutputTransport(self, self._params)
         return self._output_processor
 
     async def start(self):
@@ -186,6 +222,10 @@ class PyAudioTransport(BaseTransport):
 
         print(f"✓ PyAudio Transport 已启动 ({self.sample_rate}Hz, {self.channels}ch)")
 
+        # ✅ 如果配置了 VAD，显示信息
+        if self._params.vad_analyzer:
+            print(f"✓ VAD 已启用: {type(self._params.vad_analyzer).__name__}")
+
     async def stop(self):
         """停止音频流"""
         if self.input_stream:
@@ -198,3 +238,4 @@ class PyAudioTransport(BaseTransport):
 
         self.p.terminate()
         print("✓ PyAudio Transport 已停止")
+
