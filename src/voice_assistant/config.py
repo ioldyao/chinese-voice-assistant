@@ -1,14 +1,17 @@
 """配置文件"""
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
-# API配置 - 建议使用环境变量
-DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "sk-49d20b6630984acabb4f28aa0bc7ab17")
-ALIYUN_APPKEY = os.getenv("ALIYUN_APPKEY", "YOUR_APPKEY")
+# 加载 .env 文件
+load_dotenv()
 
-# API URL
-DASHSCOPE_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-ALIYUN_TTS_URL = "https://nls-gateway-cn-shanghai.aliyuncs.com/rest/v1/tts/async"
+# API配置 - 从环境变量读取
+DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
+DASHSCOPE_API_URL = os.getenv("DASHSCOPE_API_URL")
+QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-plus")  # 默认值
+ALIYUN_APPKEY = os.getenv("ALIYUN_APPKEY")
+ALIYUN_TTS_URL = os.getenv("ALIYUN_TTS_URL", "https://nls-gateway-cn-shanghai.aliyuncs.com/rest/v1/tts/async")  # 默认阿里云 TTS URL
 
 # 路径配置
 PROJECT_ROOT = Path(__file__).parent.parent.parent

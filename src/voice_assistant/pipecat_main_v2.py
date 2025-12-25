@@ -56,7 +56,7 @@ from pipecat.services.openai.llm import (
 
 # 导入现有组件
 from .wake_word import SmartWakeWordSystem
-from .config import MODELS_DIR
+from .config import MODELS_DIR, QWEN_MODEL
 
 
 async def create_pipecat_pipeline():
@@ -114,7 +114,7 @@ async def create_pipecat_pipeline():
     # 2. 初始化 Qwen LLM Service
     print("⏳ 初始化 LLM Service...")
 
-    llm = QwenLLMService(model="qwen-plus")
+    llm = QwenLLMService(model=QWEN_MODEL)  # 使用本地部署的 Qwen 模型
 
     # 注册 MCP 函数处理器
     await register_mcp_functions(llm, mcp)
