@@ -195,6 +195,9 @@ class QwenLLMService(OpenAILLMService):
     - ✅ 支持 Function Calling（MCP 工具）
     - ✅ 支持流式响应
     - ✅ 保持 Qwen 生态（中文效果好）
+
+    修复：
+    - ✅ 修复 tool_calls 时缺少 content 字段的问题（本地 Qwen 严格要求）
     """
 
     def __init__(
@@ -218,6 +221,15 @@ class QwenLLMService(OpenAILLMService):
         api_key = api_key or DASHSCOPE_API_KEY
         base_url = base_url or DASHSCOPE_API_URL
 
+        # Qwen3 特殊参数：禁用思考模式
+        if "extra" not in kwargs:
+            kwargs["extra"] = {}
+        if "body" not in kwargs["extra"]:
+            kwargs["extra"]["body"] = {}
+
+        # 添加 chat_template_kwargs 参数（Qwen3 专用）
+        kwargs["extra"]["body"]["chat_template_kwargs"] = {"enable_thinking": False}
+
         # 调用父类构造函数（OpenAILLMService）
         super().__init__(
             api_key=api_key,
@@ -229,6 +241,25 @@ class QwenLLMService(OpenAILLMService):
         print(f"✓ QwenLLMService 初始化完成")
         print(f"  - 模型: {model}")
         print(f"  - API: {base_url}")
+        print(f"  - 思考模式: 已禁用")
+
+    def _get_messages(self, context: OpenAILLMContext) -> list:
+        """
+        获取 messages 并修正格式（修复 tool_calls 时缺少 content 的问题）
+
+        本地 Qwen 要求：assistant message 有 tool_calls 时必须包含 content 字段
+        （即使是空字符串也要有）
+        """
+        # 调用父类方法获取原始 messages
+        messages = super()._get_messages(context)
+
+        # 修正所有 assistant message：确保有 tool_calls 时也有 content
+        for msg in messages:
+            if msg.get("role") == "assistant" and "tool_calls" in msg:
+                if "content" not in msg:
+                    msg["content"] = ""  # 添加空 content
+
+        return messages
 
 
 class QwenLLMContext(OpenAILLMContext):
