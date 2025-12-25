@@ -492,6 +492,9 @@ class VisionProcessor(FrameProcessor):
         self.api_key = api_key
         self.context = context  # LLMContext 实例
 
+        # ✅ 追踪已处理的消息（避免重复处理）
+        self._processed_messages = set()
+
         # Vision 关键词
         self.vision_keywords = [
             "看", "查看", "讲解", "描述", "显示什么", "显示的",
@@ -611,8 +614,20 @@ class VisionProcessor(FrameProcessor):
             if last_message.get("role") == "user":
                 text_content = last_message.get("content", "")
 
+                # ✅ 使用消息内容的 hash 作为唯一标识
+                message_id = hash(text_content)
+
+                # ✅ 检查是否已处理过这条消息
+                if message_id in self._processed_messages:
+                    # 已处理，跳过
+                    await self.push_frame(frame, direction)
+                    return
+
                 if self._needs_vision(text_content):
                     print(f"🔍 Vision 模式: {text_content}")
+
+                    # ✅ 标记为已处理（在处理前，防止并发重复）
+                    self._processed_messages.add(message_id)
 
                     try:
                         # 异步截图
