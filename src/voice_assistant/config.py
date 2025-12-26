@@ -6,10 +6,30 @@ from dotenv import load_dotenv
 # 加载 .env 文件
 load_dotenv()
 
-# API配置 - 从环境变量读取
-DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
-DASHSCOPE_API_URL = os.getenv("DASHSCOPE_API_URL")
-QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-plus")  # 默认值
+# ==================== LLM 配置 - 从环境变量读取 ====================
+# 指定使用哪个 LLM 服务
+LLM_SERVICE = os.getenv("LLM_SERVICE", "qwen")  # 默认使用 qwen
+
+# Qwen (阿里云 DashScope) 配置
+QWEN_API_KEY = os.getenv("QWEN_API_KEY")
+QWEN_API_URL = os.getenv("QWEN_API_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-plus")  # qwen-plus, qwen-max, qwen-turbo, 或本地模型
+
+# DeepSeek 配置
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/v1")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")  # deepseek-chat, deepseek-reasoner
+
+# OpenAI 配置
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_URL = os.getenv("OPENAI_API_URL", "https://api.openai.com/v1")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")  # gpt-4o, gpt-4, gpt-3.5-turbo, o1
+
+# ==================== 向后兼容配置（旧变量名） ====================
+DASHSCOPE_API_KEY = QWEN_API_KEY  # 向后兼容
+DASHSCOPE_API_URL = QWEN_API_URL  # 向后兼容
+
+# ==================== TTS 配置 ====================
 ALIYUN_APPKEY = os.getenv("ALIYUN_APPKEY")
 ALIYUN_TTS_URL = os.getenv("ALIYUN_TTS_URL", "https://nls-gateway-cn-shanghai.aliyuncs.com/rest/v1/tts/async")  # 默认阿里云 TTS URL
 

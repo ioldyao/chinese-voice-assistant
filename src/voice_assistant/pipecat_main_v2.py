@@ -40,10 +40,13 @@ from .pipecat_adapters import (
     VisionProcessor,
 )
 
-# 导入 Qwen LLM Service（官方框架）
+# 导入 LLM 服务（使用工厂模式）
+from .llm_services import (
+    create_llm_service,
+    create_llm_context,
+    LLMFactory,
+)
 from .qwen_llm_service import (
-    QwenLLMService,
-    QwenLLMContext,
     mcp_tools_to_openai_format,
     register_mcp_functions,
 )
@@ -56,7 +59,13 @@ from pipecat.services.openai.llm import (
 
 # 导入现有组件
 from .wake_word import SmartWakeWordSystem
-from .config import MODELS_DIR, QWEN_MODEL
+from .config import (
+    MODELS_DIR,
+    LLM_SERVICE,
+    QWEN_API_KEY, QWEN_API_URL, QWEN_MODEL,
+    DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL,
+    OPENAI_API_KEY, OPENAI_API_URL, OPENAI_MODEL,
+)
 
 
 async def create_pipecat_pipeline():
@@ -111,10 +120,48 @@ async def create_pipecat_pipeline():
         print(f"❌ MCP Server 启动失败")
         raise RuntimeError("MCP Server 启动失败")
 
-    # 2. 初始化 Qwen LLM Service
+    # 2. 初始化 LLM Service（使用工厂模式）
     print("⏳ 初始化 LLM Service...")
 
-    llm = QwenLLMService(model=QWEN_MODEL)  # 使用本地部署的 Qwen 模型
+    # 根据 LLM_SERVICE 配置选择对应的 API 密钥和配置
+    llm_config = {
+        "qwen": {
+            "service": "qwen",
+            "api_key": QWEN_API_KEY,
+            "base_url": QWEN_API_URL,
+            "model": QWEN_MODEL,
+        },
+        "deepseek": {
+            "service": "deepseek",
+            "api_key": DEEPSEEK_API_KEY,
+            "base_url": DEEPSEEK_API_URL,
+            "model": DEEPSEEK_MODEL,
+        },
+        "openai": {
+            "service": "openai",
+            "api_key": OPENAI_API_KEY,
+            "base_url": OPENAI_API_URL,
+            "model": OPENAI_MODEL,
+        },
+    }
+
+    # 获取当前选择的 LLM 配置
+    if LLM_SERVICE.lower() not in llm_config:
+        raise ValueError(
+            f"不支持的 LLM_SERVICE: {LLM_SERVICE}。"
+            f"支持的服务：qwen, deepseek, openai"
+        )
+
+    config = llm_config[LLM_SERVICE.lower()]
+
+    # 使用工厂创建 LLM 服务
+    llm = create_llm_service(**config)
+
+    # 显示模型信息
+    model_name = LLMFactory.get_model_display_name(llm)
+    print(f"✓ LLM Service 初始化完成")
+    print(f"  - 服务: {LLM_SERVICE}")
+    print(f"  - 模型: {model_name}")
 
     # 注册 MCP 函数处理器
     await register_mcp_functions(llm, mcp)
@@ -157,7 +204,7 @@ async def create_pipecat_pipeline():
         }
     ]
 
-    context = QwenLLMContext(messages, tools=tools)
+    context = create_llm_context(messages, tools=tools)
 
     # 创建 Context Aggregators
     user_aggregator = OpenAIUserContextAggregator(context)
