@@ -2,13 +2,13 @@
 
 <div align="center">
 
-**双阶段语音识别 + Pipecat 官方 LLM + Playwright 浏览器控制 + 实时音频处理**
+**双阶段语音识别 + 多 LLM 服务 + Playwright 浏览器控制 + 实时音频处理**
 
-基于 Sherpa-ONNX + Qwen LLM Service + Playwright MCP + Piper + Pipecat 的中文语音助手
+基于 Sherpa-ONNX + Pipecat LLM Service + Playwright MCP + Piper + Pipecat 的中文语音助手
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.2.1-green.svg)](https://github.com/yourusername/chinese-voice-assistant)
+[![Version](https://img.shields.io/badge/version-2.4.0-green.svg)](https://github.com/yourusername/chinese-voice-assistant)
 
 </div>
 
@@ -20,10 +20,13 @@
   - **阶段2 - ASR**: 唤醒后启动完整语音识别（120MB），准确率高
   - 支持自定义唤醒词（默认：小智、你好助手、智能助手）
 
-- **🧠 Qwen LLM Service**: 基于 Pipecat 官方框架
-  - **完全异步执行**（继承 OpenAILLMService）
-  - **自动管理对话历史**（LLMContextAggregator）
-  - **Function Calling**（MCP 工具无缝集成）
+- **🧠 多 LLM 服务支持**: 工厂模式，灵活切换
+  - **Qwen** - 阿里云 DashScope（中文优化，Function Calling）
+  - **DeepSeek** - DeepSeek API（强推理，低成本）
+  - **OpenAI** - 官方 API（GPT-4o, o1 等）
+  - 基于 Pipecat 官方框架（继承 OpenAILLMService）
+  - **完全异步执行**，自动管理对话历史
+  - **统一接口**，通过 `.env` 一键切换模型
   - 基于 MCP Python SDK 官方推荐模式
 
 - **🎭 Playwright MCP**: 浏览器自动化操作
@@ -48,9 +51,10 @@
   - **完全异步化**（asyncio + PIL）
 
 ### 🎨 技术亮点（混合架构）
-- ⚡ **官方 LLM Service** - QwenLLMService（继承 OpenAILLMService）✨
-- 🎯 **自动对话管理** - LLMContextAggregator（官方框架）✨
-- 🔄 **Function Calling** - MCP 工具无缝集成（官方机制）✨
+- ⚡ **多 LLM 服务工厂** - 支持 Qwen/DeepSeek/OpenAI 灵活切换✨
+- 🎯 **官方 LLM Service** - 继承 OpenAILLMService（官方框架）✨
+- 🔄 **自动对话管理** - LLMContextAggregator（官方框架）✨
+- 🛠️ **Function Calling** - MCP 工具无缝集成（官方机制）✨
 - 🚀 **保留自定义优势** - KWS + ASR + Piper TTS（本地、免费）
 - 🛡️ **完全异步架构** - 纯异步，无线程开销
 - 👁️ **多模型 Vision 系统** - 本地/云端模型可配置切换
@@ -71,7 +75,7 @@
 - ✅ 多模型 Vision（Moondream 本地 + Qwen-VL API，可切换）
 
 **改用官方（享受生态）**：
-- ✨ LLM Service（QwenLLMService）
+- ✨ LLM Service（多服务支持：Qwen/DeepSeek/OpenAI）
 - ✨ Context Aggregator（自动管理历史）
 - ✨ Function Calling（MCP 工具集成）
 - ✨ VAD + Smart Turn（Silero VAD + Smart Turn v3）
@@ -133,26 +137,32 @@ cp .env.example .env
 
 2. 编辑 `.env` 文件，填入你的 API 配置：
 ```bash
-# Qwen LLM 配置
-# 本地部署的 Qwen 模型服务器
-DASHSCOPE_API_KEY=your-api-key-here
-DASHSCOPE_API_URL=http://localhost:4000/v1
+# ==================== LLM 配置 ====================
+# 指定使用哪个 LLM 服务：qwen | deepseek | openai
+LLM_SERVICE=qwen
+
+# Qwen (阿里云 DashScope) 配置组
+QWEN_API_KEY=your-qwen-api-key-here
+QWEN_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_MODEL=qwen-plus
+# 可选模型：qwen-plus, qwen-max, qwen-turbo
+# 本地部署示例：QWEN_API_URL=http://localhost:4000/v1, QWEN_MODEL=Local1-Qwen3-235B
+
+# DeepSeek 配置组
+# DEEPSEEK_API_KEY=your-deepseek-api-key-here
+# DEEPSEEK_API_URL=https://api.deepseek.com/v1
+# DEEPSEEK_MODEL=deepseek-chat
+# 可选模型：deepseek-chat, deepseek-reasoner
+
+# OpenAI 配置组
+# OPENAI_API_KEY=your-openai-api-key-here
+# OPENAI_API_URL=https://api.openai.com/v1
+# OPENAI_MODEL=gpt-4o
+# 可选模型：gpt-4o, gpt-4, gpt-3.5-turbo, o1-preview, o1-mini
 
 # ==================== Vision 服务配置 ====================
 # 指定使用哪个 Vision 服务：moondream | qwen-vl-plus | qwen-vl-max
 VISION_SERVICE=moondream
-
-# Moondream 本地模型配置
-MOONDREAM_USE_CPU=false
-
-# Qwen-VL API 配置（使用 qwen-vl-plus 或 qwen-vl-max 时需要）
-QWEN_VL_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-QWEN_VL_API_KEY=your-dashscope-api-key-here
-
-# 阿里云 TTS 配置（可选）
-ALIYUN_APPKEY=your-appkey-here
-ALIYUN_TTS_URL=https://nls-gateway-cn-shanghai.aliyuncs.com/rest/v1/tts/async
 ```
 
 **重要提示**：
@@ -161,13 +171,32 @@ ALIYUN_TTS_URL=https://nls-gateway-cn-shanghai.aliyuncs.com/rest/v1/tts/async
 - ✅ `.env.example` 作为配置模板（已提交到 git）
 
 获取 API Key：
-- [阿里云 DashScope](https://dashscope.console.aliyun.com/)
+- **Qwen**: [阿里云 DashScope](https://dashscope.console.aliyun.com/)
+- **DeepSeek**: [DeepSeek 开放平台](https://platform.deepseek.com/)
+- **OpenAI**: [OpenAI Platform](https://platform.openai.com/)
 
-### 本地 Qwen 部署（推荐）
-如果你使用本地部署的 Qwen 模型，修改 `.env`：
+### 多 LLM 切换示例
+
+#### 切换到 DeepSeek（强推理）
 ```bash
-DASHSCOPE_API_URL=http://your-server-ip:port/v1
-QWEN_MODEL=Local1-Qwen3-235B  # 你的模型名称
+LLM_SERVICE=deepseek
+DEEPSEEK_API_KEY=sk-xxxxx
+DEEPSEEK_MODEL=deepseek-chat  # 或 deepseek-reasoner
+```
+
+#### 切换到 OpenAI（GPT-4o）
+```bash
+LLM_SERVICE=openai
+OPENAI_API_KEY=sk-xxxxx
+OPENAI_MODEL=gpt-4o  # 或 gpt-4, o1-preview
+```
+
+#### 切换回 Qwen（本地部署）
+```bash
+LLM_SERVICE=qwen
+QWEN_API_KEY=your-key
+QWEN_API_URL=http://localhost:4000/v1
+QWEN_MODEL=Local1-Qwen3-235B
 ```
 
 ### 唤醒词配置
@@ -282,28 +311,33 @@ uv run python -m src.voice_assistant.pipecat_main_v2
 chinese-voice-assistant/
 ├── src/voice_assistant/      # 核心源代码
 │   ├── __init__.py           # 模块导出 (40行)
-│   ├── config.py             # 配置管理 (40行)
+│   ├── config.py             # 配置管理 (55行)
 │   ├── wake_word.py          # 模型加载器 (95行)
 │   ├── react_agent.py        # React 智能代理 (603行)
 │   │                         # - 完全异步执行（Pipecat 模式）
 │   ├── mcp_client.py         # MCP 客户端 (378行)
 │   │                         # - MCPManager (异步，多Server管理)
-│   ├── qwen_llm_service.py   # Qwen LLM Service (209行)
-│   │                         # - QwenLLMService（官方框架）
-│   │                         # - MCP Tools 转换器
+│   ├── llm_services.py       # LLM 服务工厂 (280行)
+│   │                         # - QwenLLMService, DeepSeekLLMService, OpenAILLMServiceWrapper
+│   │                         # - LLMFactory (工厂模式)
+│   ├── qwen_llm_service.py   # MCP 工具转换器 (180行)
+│   │                         # - MCP Tools → OpenAI 格式
 │   │                         # - Function Calling 注册
 │   ├── pipecat_main_v2.py    # Pipecat 主程序 v2 (365行)
 │   │                         # - 符合官方架构（BaseTransport + CancelFrame）
-│   │                         # - 修复 Ctrl+C 挂起问题
+│   │                         # - 使用 LLM 工厂模式
 │   ├── pyaudio_transport.py  # PyAudio Transport (201行)
 │   │                         # - 标准 BaseTransport 实现
 │   ├── vad_processor.py      # VAD Processor (63行)
 │   │                         # - Silero VAD 集成（开发中）
-│   ├── pipecat_adapters.py   # Pipecat Processors (620行)
+│   ├── pipecat_adapters.py   # Pipecat Processors (676行)
 │   │                         # - SherpaKWSProcessor (KWS)
 │   │                         # - SherpaASRProcessor (ASR + 临时 RMS VAD)
 │   │                         # - VisionProcessor (Vision)
 │   │                         # - PiperTTSProcessor (TTS)
+│   ├── vision_services.py    # Vision 服务工厂 (233行)
+│   │                         # - MoondreamVisionService, QwenVLVisionService
+│   │                         # - VisionFactory (工厂模式)
 │   ├── tts.py                # TTS 语音合成 (372行)
 │   └── vision.py             # 视觉理解 (136行)
 │
@@ -329,28 +363,30 @@ chinese-voice-assistant/
 │   ├── sherpa-onnx-kws-*/    # KWS 模型 (3.3MB)
 │   └── sherpa-onnx-paraformer-zh/ # ASR 模型 (120MB)
 │
-├── main.py                   # 主程序入口 (26行)
-├── pyproject.toml            # 项目配置 (v2.2.1)
+├── main.py                   # 主程序入口 (35行)
+├── pyproject.toml            # 项目配置 (v2.4.0)
 └── README.md                 # 项目文档
 ```
 
 ### 代码统计
 | 模块 | 代码行数 | 主要功能 |
 |-----|---------|---------|
-| `pipecat_adapters.py` | 620 | Pipecat Processors（KWS/ASR+VAD/Vision/TTS） |
+| `pipecat_adapters.py` | 676 | Pipecat Processors（KWS/ASR+VAD/Vision/TTS） |
 | `react_agent.py` | 603 | React 推理框架（完全异步） |
 | `mcp_client.py` | 378 | MCP 客户端（异步多 Server） |
 | `tts.py` | 372 | TTS 引擎管理（Piper/RealtimeTTS） |
-| `pipecat_main_v2.py` | 365 | Pipecat Pipeline v2（修复挂起） |
-| `qwen_llm_service.py` | 209 | Qwen LLM Service（官方框架集成） |
+| `pipecat_main_v2.py` | 365 | Pipecat Pipeline v2（LLM 工厂） |
+| `llm_services.py` | 280 | LLM 服务工厂（Qwen/DeepSeek/OpenAI） |
+| `vision_services.py` | 233 | Vision 服务工厂（多模型支持） |
 | `pyaudio_transport.py` | 201 | 标准 PyAudio Transport |
+| `qwen_llm_service.py` | 180 | MCP 工具转换器 + 函数注册 |
 | `vision.py` | 136 | Qwen-VL-Max 视觉理解（异步） |
 | `wake_word.py` | 95 | 模型加载器（KWS + ASR） |
 | `vad_processor.py` | 63 | Silero VAD Processor（开发中） |
-| `config.py` | 40 | 全局配置 |
+| `config.py` | 55 | 全局配置（LLM + Vision） |
 | `__init__.py` | 40 | 模块导出 |
-| `main.py` | 26 | Pipecat 单一入口 |
-| **总计** | **~3,148** | **v2.2.1 完整实现** |
+| `main.py` | 35 | Pipecat 单一入口 |
+| **总计** | **~3,682** | **v2.4.0 完整实现** |
 
 ---
 
@@ -531,6 +567,70 @@ A:
 ---
 
 ## 🔥 最近更新
+
+### v2.4.0 - 多 LLM 服务支持 + 工厂模式（2025-12-26）
+
+#### ✨ 核心特性
+1. **LLM 服务工厂架构** - 类似 Vision 的灵活设计
+   - 新增 `llm_services.py` 模块（~280 行）
+   - 支持 **Qwen**（阿里云 DashScope）
+   - 支持 **DeepSeek**（强推理，低成本）
+   - 支持 **OpenAI**（GPT-4o, o1 等）
+   - 统一接口，工厂模式创建
+
+2. **配置分组管理** - 清晰易读的配置
+   - `LLM_SERVICE` 选择器（qwen/deepseek/openai）
+   - 每个服务独立配置组
+   - 向后兼容（保留 `DASHSCOPE_*` 变量名）
+   - `.env.example` 清晰示例
+
+3. **变量名语义化** - 不再硬编码 Qwen
+   - `QWEN_API_KEY` 替代 `DASHSCOPE_API_KEY`
+   - `DEEPSEEK_API_KEY`、`OPENAI_API_KEY` 等
+   - 代码可读性提升
+
+#### 🔧 技术实现
+```python
+# 工厂模式创建 LLM 服务
+llm = create_llm_service(
+    service="qwen",  # 或 deepseek, openai
+    api_key="...",
+    base_url="...",
+    model="..."
+)
+
+# 统一上下文
+context = create_llm_context(messages, tools=tools)
+```
+
+#### 📊 配置示例
+```env
+# 切换 LLM 服务只需修改一行
+LLM_SERVICE=qwen     # 或 deepseek, openai
+
+# 每个服务独立配置
+QWEN_API_KEY=xxx
+DEEPSEEK_API_KEY=xxx
+OPENAI_API_KEY=xxx
+```
+
+#### 🎯 技术亮点
+- ✅ 工厂模式 - 统一接口，灵活切换
+- ✅ 配置分组 - 清晰易读
+- ✅ 向后兼容 - 保留旧变量名映射
+- ✅ 扩展友好 - 轻松添加新 LLM 服务
+- ✅ 变量名语义化 - 不再硬编码特定厂商
+
+#### 🐛 Bug 修复
+- 修复 `QwenLLMService` 访问 `self.model` 报错
+- 所有 LLM 服务添加 `_model_name` 属性
+- 增强 `get_model_display_name()` fallback 逻辑
+
+#### 📝 修改文件
+- 新增：`src/voice_assistant/llm_services.py`
+- 修改：`config.py`, `pipecat_main_v2.py`, `.env.example`
+
+---
 
 ### v2.2.1 - 修复 TTS 无输出问题（2025-12-25）
 
