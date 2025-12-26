@@ -35,6 +35,9 @@ class QwenLLMService(OpenAILLMService):
             model: 模型名称（qwen-plus, qwen-max, qwen-turbo, 或本地模型）
             **kwargs: 传递给 OpenAILLMService 的其他参数
         """
+        # 保存模型名称（用于显示）
+        self._model_name = model
+
         # Qwen3 特殊参数：禁用思考模式
         if "extra" not in kwargs:
             kwargs["extra"] = {}
@@ -72,7 +75,7 @@ class QwenLLMService(OpenAILLMService):
 
     def get_model_name(self) -> str:
         """返回模型显示名称"""
-        return f"Qwen ({self.model})"
+        return f"Qwen ({self._model_name})"
 
 
 # ==================== DeepSeek LLM Service ====================
@@ -105,6 +108,9 @@ class DeepSeekLLMService(OpenAILLMService):
             model: 模型名称（deepseek-chat, deepseek-reasoner）
             **kwargs: 传递给 OpenAILLMService 的其他参数
         """
+        # 保存模型名称（用于显示）
+        self._model_name = model
+
         super().__init__(
             api_key=api_key,
             base_url=base_url,
@@ -114,7 +120,7 @@ class DeepSeekLLMService(OpenAILLMService):
 
     def get_model_name(self) -> str:
         """返回模型显示名称"""
-        return f"DeepSeek ({self.model})"
+        return f"DeepSeek ({self._model_name})"
 
 
 # ==================== OpenAI LLM Service（原生） ====================
@@ -147,6 +153,9 @@ class OpenAILLMServiceWrapper(OpenAILLMService):
             model: 模型名称（gpt-4o, gpt-4, gpt-3.5-turbo, o1 等）
             **kwargs: 传递给 OpenAILLMService 的其他参数
         """
+        # 保存模型名称（用于显示）
+        self._model_name = model
+
         super().__init__(
             api_key=api_key,
             base_url=base_url,
@@ -156,7 +165,7 @@ class OpenAILLMServiceWrapper(OpenAILLMService):
 
     def get_model_name(self) -> str:
         """返回模型显示名称"""
-        return f"OpenAI ({self.model})"
+        return f"OpenAI ({self._model_name})"
 
 
 # ==================== LLM Context（统一） ====================
@@ -251,7 +260,10 @@ class LLMFactory:
         """获取模型显示名称"""
         if hasattr(llm_service, 'get_model_name'):
             return llm_service.get_model_name()
-        return f"LLM ({llm_service.model})"
+        elif hasattr(llm_service, '_model_name'):
+            return f"LLM ({llm_service._model_name})"
+        else:
+            return "LLM (Unknown)"
 
 
 # 便捷函数
