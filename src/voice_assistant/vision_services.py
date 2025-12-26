@@ -55,23 +55,15 @@ class MoondreamVisionService(BaseVisionService):
         from pipecat.frames.frames import UserImageRawFrame, VisionTextFrame
 
         try:
-            # 1. 缩小图片尺寸（Moondream 推荐 < 1024x1024）
-            max_size = 800
-            if max(image.size) > max_size:
-                ratio = max_size / max(image.size)
-                new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
-                image = image.resize(new_size, Image.LANCZOS)
-                print(f"📏 图片已缩放: {image.size}")
-
-            # 2. 转换为 RGB 格式
+            # 1. 转换为 RGB 格式
             if image.mode != 'RGB':
                 image = image.convert('RGB')
 
-            # 3. 将中文问题翻译为英文
+            # 2. 将中文问题翻译为英文
             question_en = self._translate_to_english(question)
             print(f"💬 英文提示: {question_en}")
 
-            # 4. 创建 UserImageRawFrame
+            # 3. 创建 UserImageRawFrame
             frame = UserImageRawFrame(
                 image=image.tobytes(),
                 format=image.mode,
@@ -79,7 +71,7 @@ class MoondreamVisionService(BaseVisionService):
                 text=question_en
             )
 
-            # 5. 调用 Moondream
+            # 4. 调用 Moondream
             description = ""
             async for output_frame in self.moondream.run_vision(frame):
                 if isinstance(output_frame, VisionTextFrame):
@@ -130,22 +122,14 @@ class QwenVLVisionService(BaseVisionService):
         import io
 
         try:
-            # 1. 缩小图片（减少传输时间）
-            max_size = 1024
-            if max(image.size) > max_size:
-                ratio = max_size / max(image.size)
-                new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
-                image = image.resize(new_size, Image.LANCZOS)
-                print(f"📏 图片已缩放: {image.size}")
-
-            # 2. 转换为 base64
+            # 1. 转换为 base64
             img_byte_arr = io.BytesIO()
             image.save(img_byte_arr, format='PNG')
             img_base64 = base64.b64encode(img_byte_arr.getvalue()).decode()
 
             print(f"📸 调用 {self.model} API...")
 
-            # 3. 调用 API
+            # 2. 调用 API
             async with httpx.AsyncClient(timeout=60) as client:
                 response = await client.post(
                     f"{self.api_url}/chat/completions",
