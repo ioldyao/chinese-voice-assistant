@@ -50,3 +50,4 @@ voice_wake_up.py
 # Example projects (excluded from version control)
 Example/pipecat-client-web/
 Example/voice-ui-kit/
+Example/pipecat-flows/
