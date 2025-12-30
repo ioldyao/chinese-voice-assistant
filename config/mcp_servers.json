@@ -5,80 +5,51 @@
   "servers": [
     {
       "name": "playwright",
-      "description": "浏览器自动化 - 提供网页导航、点击、输入、截图等功能",
+      "description": "浏览器自动化 - 网页导航、点击、输入、截图等（工具列表由 MCP Server 自动提供）",
       "command": "npx",
       "args": ["@playwright/mcp@latest"],
       "timeout": 120,
-      "enabled": true,
-      "tools": [
-        "browser_navigate",
-        "browser_snapshot",
-        "browser_click",
-        "browser_input",
-        "browser_scroll"
-      ]
+      "enabled": true
     },
     {
       "name": "windows",
-      "description": "Windows 系统操作 - 提供鼠标点击、键盘输入、应用启动等功能",
+      "description": "Windows 系统操作 - 鼠标点击、键盘输入、应用启动等（工具列表由 MCP Server 自动提供）",
       "command": "uvx",
       "args": ["windows-mcp"],
       "timeout": 60,
-      "enabled": false,
-      "tools": [
-        "State-Tool",
-        "Click-Tool",
-        "Type-Tool",
-        "Shortcut-Tool",
-        "Scroll-Tool",
-        "App-Tool",
-        "Scrape-Tool"
-      ]
+      "enabled": false
     },
     {
       "name": "filesystem",
-      "description": "文件系统操作 - 提供文件读取、写入、搜索等功能",
+      "description": "文件系统操作 - 文件读取、写入、搜索等（工具列表由 MCP Server 自动提供）",
       "command": "npx",
       "args": [
         "@modelcontextprotocol/server-filesystem@latest",
         "C:\\Users\\iEZELL\\chinese-voice-assistant"
       ],
       "timeout": 60,
-      "enabled": false,
-      "tools": [
-        "read_file",
-        "write_file",
-        "list_directory",
-        "create_directory",
-        "search_files"
-      ]
+      "enabled": false
     },
     {
       "name": "github",
-      "description": "GitHub 操作 - 提供仓库管理、Issue、PR 等功能",
+      "description": "GitHub 操作 - 仓库管理、Issue、PR 等（工具列表由 MCP Server 自动提供）",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "your-github-token-here"
       },
       "timeout": 60,
-      "enabled": false,
-      "tools": [
-        "create_or_update_file",
-        "search_repositories",
-        "create_issue",
-        "create_pull_request"
-      ]
+      "enabled": false
     }
   ],
   "_comments": {
+    "说明": "工具列表会在 Server 启动后通过 MCP 协议自动获取（session.list_tools()），无需在配置中指定",
     "name": "Server 唯一标识符",
-    "description": "Server 功能描述",
+    "description": "Server 功能描述（工具列表由 Server 运行时提供）",
     "command": "启动命令（如 npx, uvx, python）",
     "args": "命令参数列表",
-    "env": "环境变量（可选）",
+    "env": "环境变量（可选，用于 API Token 等）",
     "timeout": "启动超时时间（秒）",
-    "enabled": "是否启用该 Server",
-    "tools": "提供的工具列表（仅用于文档说明）"
+    "enabled": "是否启用该 Server（true/false）"
   }
 }

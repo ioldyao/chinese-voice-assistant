@@ -232,27 +232,32 @@ config/mcp_servers.json
       "command": "npx",
       "args": ["@playwright/mcp@latest"],
       "timeout": 120,
-      "enabled": true,  // ← 设置为 true 启用
-      "tools": ["browser_navigate", "browser_click", ...]
+      "enabled": true  // ← 设置为 true 启用
     },
     {
       "name": "windows",
       "description": "Windows 系统操作",
-      "enabled": false,  // ← 设置为 true 启用
-      ...
+      "enabled": false  // ← 设置为 true 启用
     }
-  ]
+  ],
+  "_comments": {
+    "说明": "工具列表会在 Server 启动后通过 MCP 协议自动获取（session.list_tools()）"
+  }
 }
 ```
 
+> **注意：** 工具列表由 MCP Server 运行时自动提供，无需在配置文件中指定。
+
 #### 可用的 MCP Server
 
-| Server | 功能 | 默认状态 | 工具数量 |
-|--------|------|---------|---------|
-| **playwright** | 浏览器自动化（导航、点击、输入、截图） | ✅ 启用 | 5+ |
-| **windows** | Windows 系统操作（鼠标、键盘、应用） | ⚪ 禁用 | 7+ |
-| **filesystem** | 文件系统操作（读取、写入、搜索） | ⚪ 禁用 | 5+ |
-| **github** | GitHub 操作（仓库管理、Issue、PR） | ⚪ 禁用 | 4+ |
+| Server | 功能 | 默认状态 |
+|--------|------|---------|
+| **playwright** | 浏览器自动化（导航、点击、输入、截图） | ✅ 启用 |
+| **windows** | Windows 系统操作（鼠标、键盘、应用） | ⚪ 禁用 |
+| **filesystem** | 文件系统操作（读取、写入、搜索） | ⚪ 禁用 |
+| **github** | GitHub 操作（仓库管理、Issue、PR） | ⚪ 禁用 |
+
+> **说明：** 工具列表在 Server 启动后自动获取，无需手动配置。
 
 #### 启用/禁用 Server
 
