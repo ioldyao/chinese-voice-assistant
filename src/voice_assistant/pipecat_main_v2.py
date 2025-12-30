@@ -65,6 +65,8 @@ from .config import (
     QWEN_API_KEY, QWEN_API_URL, QWEN_MODEL,
     DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL,
     OPENAI_API_KEY, OPENAI_API_URL, OPENAI_MODEL,
+    load_mcp_servers_config,
+    get_mcp_server_info,
 )
 
 
@@ -98,18 +100,26 @@ async def create_pipecat_pipeline():
     from .mcp_client import MCPManager
     mcp = MCPManager()
 
-    servers = [
-        ("playwright", "npx", ["@playwright/mcp@latest"], 120)
-    ]
+    # ✅ 从配置文件加载 Server 列表
+    servers = load_mcp_servers_config()
+
+    if not servers:
+        print(f"❌ 没有已启用的 MCP Server")
+        raise RuntimeError("没有已启用的 MCP Server")
 
     success_count = 0
-    for name, command, args, timeout in servers:
+    for server_config in servers:
         try:
-            success = await mcp.add_server_async(name, command, args, timeout)
+            success = await mcp.add_server_async(
+                name=server_config["name"],
+                command=server_config["command"],
+                args=server_config["args"],
+                timeout=server_config["timeout"]
+            )
             if success:
                 success_count += 1
         except Exception as e:
-            print(f"  ❌ {name} Server 启动失败: {e}")
+            print(f"  ❌ {server_config['name']} Server 启动失败: {e}")
             continue
 
     if success_count > 0:

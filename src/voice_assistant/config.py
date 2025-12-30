@@ -1,6 +1,8 @@
 """配置文件"""
 import os
+import json
 from pathlib import Path
+from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 
 # 加载 .env 文件
@@ -72,3 +74,87 @@ DEFAULT_WAKE_WORDS = [
     "n ǐ h ǎo zh ù sh ǒu @你好助手",
     "zh ì n éng zh ù sh ǒu @智能助手"
 ]
+
+# ==================== MCP Server 配置 ====================
+MCP_SERVERS_CONFIG_FILE = CONFIG_DIR / "mcp_servers.json"
+
+
+def load_mcp_servers_config() -> List[Dict[str, Any]]:
+    """
+    加载 MCP Server 配置
+
+    Returns:
+        已启用的 Server 配置列表
+        格式: [
+            {
+                "name": "playwright",
+                "command": "npx",
+                "args": ["@playwright/mcp@latest"],
+                "timeout": 120,
+                "env": {...}  # 可选
+            },
+            ...
+        ]
+    """
+    if not MCP_SERVERS_CONFIG_FILE.exists():
+        print(f"⚠️ MCP Server 配置文件不存在: {MCP_SERVERS_CONFIG_FILE}")
+        print("   将使用默认配置（仅启用 playwright）")
+        return [
+            {
+                "name": "playwright",
+                "command": "npx",
+                "args": ["@playwright/mcp@latest"],
+                "timeout": 120,
+            }
+        ]
+
+    try:
+        with open(MCP_SERVERS_CONFIG_FILE, "r", encoding="utf-8") as f:
+            config = json.load(f)
+
+        servers = config.get("servers", [])
+
+        # 只返回已启用的 Server
+        enabled_servers = [
+            {
+                "name": server["name"],
+                "command": server["command"],
+                "args": server["args"],
+                "timeout": server.get("timeout", 60),
+                "env": server.get("env"),  # 可选环境变量
+            }
+            for server in servers
+            if server.get("enabled", False)
+        ]
+
+        return enabled_servers
+
+    except Exception as e:
+        print(f"❌ 加载 MCP Server 配置失败: {e}")
+        print("   将使用默认配置（仅启用 playwright）")
+        return [
+            {
+                "name": "playwright",
+                "command": "npx",
+                "args": ["@playwright/mcp@latest"],
+                "timeout": 120,
+            }
+        ]
+
+
+def get_mcp_server_info() -> str:
+    """
+    获取 MCP Server 配置信息（用于显示）
+
+    Returns:
+        配置信息的格式化字符串
+    """
+    servers = load_mcp_servers_config()
+    if not servers:
+        return "无已启用的 MCP Server"
+
+    info_lines = [f"已启用 {len(servers)} 个 MCP Server:"]
+    for server in servers:
+        info_lines.append(f"  - {server['name']}: {server['command']} {' '.join(server['args'])}")
+
+    return "\n".join(info_lines)

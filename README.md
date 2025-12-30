@@ -8,7 +8,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.4.0-green.svg)](https://github.com/yourusername/chinese-voice-assistant)
+[![Version](https://img.shields.io/badge/version-2.5.0-green.svg)](https://github.com/yourusername/chinese-voice-assistant)
 
 </div>
 
@@ -212,6 +212,87 @@ x iǎo zh ì @小智
 n ǐ h ǎo zh ù sh ǒu @你好助手
 zh ì n éng zh ù sh ǒu @智能助手
 ```
+
+### MCP Server 配置
+
+本项目使用 **MCP (Model Context Protocol)** 协议集成各种工具能力（浏览器操作、系统控制等）。
+
+#### 配置文件位置
+```
+config/mcp_servers.json
+```
+
+#### 配置文件结构
+```json
+{
+  "servers": [
+    {
+      "name": "playwright",
+      "description": "浏览器自动化",
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"],
+      "timeout": 120,
+      "enabled": true,  // ← 设置为 true 启用
+      "tools": ["browser_navigate", "browser_click", ...]
+    },
+    {
+      "name": "windows",
+      "description": "Windows 系统操作",
+      "enabled": false,  // ← 设置为 true 启用
+      ...
+    }
+  ]
+}
+```
+
+#### 可用的 MCP Server
+
+| Server | 功能 | 默认状态 | 工具数量 |
+|--------|------|---------|---------|
+| **playwright** | 浏览器自动化（导航、点击、输入、截图） | ✅ 启用 | 5+ |
+| **windows** | Windows 系统操作（鼠标、键盘、应用） | ⚪ 禁用 | 7+ |
+| **filesystem** | 文件系统操作（读取、写入、搜索） | ⚪ 禁用 | 5+ |
+| **github** | GitHub 操作（仓库管理、Issue、PR） | ⚪ 禁用 | 4+ |
+
+#### 启用/禁用 Server
+
+编辑 `config/mcp_servers.json`，修改 `enabled` 字段：
+
+```json
+{
+  "name": "windows",
+  "enabled": true,  // false 改为 true
+  ...
+}
+```
+
+重启程序即可生效。
+
+#### 添加自定义 Server
+
+在配置文件中添加新条目：
+
+```json
+{
+  "name": "custom-server",
+  "description": "自定义功能描述",
+  "command": "python",  // 或 npx, uvx 等
+  "args": ["path/to/your/server.py"],
+  "timeout": 60,
+  "enabled": true,
+  "env": {  // 可选：环境变量
+    "API_KEY": "your-api-key"
+  }
+}
+```
+
+#### 配置优势
+
+✅ **无需修改代码** - 通过 JSON 文件管理所有 Server
+✅ **集中管理** - 所有配置在一个文件
+✅ **灵活切换** - 通过 `enabled` 字段快速启用/禁用
+✅ **向后兼容** - 配置文件不存在时自动使用默认配置
+✅ **环境变量支持** - 敏感信息可通过 `env` 字段配置
 
 ### Vision 模型配置
 
@@ -567,6 +648,59 @@ A:
 ---
 
 ## 🔥 最近更新
+
+### v2.5.0 - MCP Server 配置文件化（2025-12-30）
+
+#### ✨ 核心特性
+1. **MCP Server 配置文件管理** - 告别硬编码
+   - 新增 `config/mcp_servers.json` 配置文件
+   - 支持动态启用/禁用 Server（通过 `enabled` 字段）
+   - 预配置 4 个常用 Server：playwright、windows、filesystem、github
+   - 无需修改代码即可添加/删除 Server
+
+2. **配置加载系统** - 灵活且容错
+   - `load_mcp_servers_config()` - 加载并解析配置
+   - `get_mcp_server_info()` - 获取配置信息
+   - 配置文件不存在时自动降级到默认配置
+   - 只加载 `enabled: true` 的 Server
+
+3. **环境变量支持** - 敏感信息保护
+   - 支持在配置文件中设置 `env` 环境变量
+   - 适用于 GitHub Token、API Key 等敏感信息
+   - 与 `.env` 文件配合使用
+
+#### 🔧 技术实现
+```json
+// config/mcp_servers.json
+{
+  "servers": [
+    {
+      "name": "playwright",
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"],
+      "timeout": 120,
+      "enabled": true  // ← 一键启用/禁用
+    }
+  ]
+}
+```
+
+#### 📊 配置优势
+- ✅ **无需修改代码** - 通过 JSON 文件管理
+- ✅ **集中管理** - 所有 Server 配置在一个文件
+- ✅ **灵活切换** - `enabled` 字段快速启用/禁用
+- ✅ **向后兼容** - 配置缺失时使用默认配置
+- ✅ **文档清晰** - JSON 包含每个 Server 的功能说明
+
+#### 📝 修改文件
+- 新增：`config/mcp_servers.json` - MCP Server 配置文件
+- 修改：`src/voice_assistant/config.py` - 添加配置加载函数
+- 修改：`src/voice_assistant/pipecat_main_v2.py` - 使用配置文件
+- 修改：`src/voice_assistant/pipecat_main.py` - 使用配置文件
+- 修改：`src/voice_assistant/pipecat_flows_main.py` - 使用配置文件
+- 修改：`.env.example` - 添加 MCP Server 配置说明
+
+---
 
 ### v2.4.0 - 多 LLM 服务支持 + 工厂模式（2025-12-26）
 

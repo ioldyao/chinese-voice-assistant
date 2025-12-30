@@ -35,7 +35,7 @@ from pipecat.services.openai.llm import (
 
 # 导入现有组件
 from .wake_word import SmartWakeWordSystem
-from .config import MODELS_DIR
+from .config import MODELS_DIR, load_mcp_servers_config
 
 
 class SimplePyAudioTransport:
@@ -181,20 +181,27 @@ async def create_pipecat_pipeline():
     from .mcp_client import MCPManager
     mcp = MCPManager()
 
-    servers = [
-        # Playwright-MCP: 浏览器操作（主要使用）
-        ("playwright", "npx", ["@playwright/mcp@latest"], 120)
-    ]
+    # ✅ 从配置文件加载 Server 列表
+    servers = load_mcp_servers_config()
+
+    if not servers:
+        print(f"❌ 没有已启用的 MCP Server")
+        raise RuntimeError("没有已启用的 MCP Server")
 
     success_count = 0
-    for name, command, args, timeout in servers:
+    for server_config in servers:
         try:
-            success = await mcp.add_server_async(name, command, args, timeout)
+            success = await mcp.add_server_async(
+                name=server_config["name"],
+                command=server_config["command"],
+                args=server_config["args"],
+                timeout=server_config["timeout"]
+            )
             if success:
                 success_count += 1
-                print(f"  ✓ {name} MCP Server 启动成功")
+                print(f"  ✓ {server_config['name']} MCP Server 启动成功")
         except Exception as e:
-            print(f"  ❌ {name} Server 启动异常: {e}")
+            print(f"  ❌ {server_config['name']} Server 启动异常: {e}")
             continue
 
     if success_count > 0:
