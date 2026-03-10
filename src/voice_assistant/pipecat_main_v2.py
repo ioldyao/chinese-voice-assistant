@@ -49,6 +49,7 @@ from .llm_services import (
 from .qwen_llm_service import (
     mcp_tools_to_openai_format,
     register_mcp_functions,
+    setup_function_call_event_handlers,  # 新增：官方事件处理器
 )
 
 # 导入官方 Context Aggregator
@@ -84,7 +85,11 @@ async def create_pipecat_pipeline():
     ✅ Vision 直接修改 context（不推送新 Frame）
     """
     print("\n" + "="*60)
-    print("🎙️  中文语音助手 v2.2.1 - Pipecat 官方架构")
+    print("🎙️  中文语音助手 v2.6.0 - 重构版（官方架构 + 用户优化）")
+    print("="*60)
+    print("✨ 基于 Pipecat 官方实现")
+    print("✨ 保留 Qwen3 优化和 Bug 修复")
+    print("✨ 使用官方 Function Calling API")
     print("="*60)
 
     # 1. 初始化现有组件
@@ -173,8 +178,9 @@ async def create_pipecat_pipeline():
     print(f"  - 服务: {LLM_SERVICE}")
     print(f"  - 模型: {model_name}")
 
-    # 注册 MCP 函数处理器
+    # 注册 MCP 函数处理器（使用官方 register_function API）
     await register_mcp_functions(llm, mcp)
+    print("✓ 已使用官方 API 注册 MCP 函数处理器")
 
     # 创建 Tools（OpenAI API 格式）
     tools = mcp_tools_to_openai_format(mcp_tools)
@@ -334,6 +340,9 @@ async def main():
                 audio_out_sample_rate=16000,
             )
         )
+
+        # 可选：设置官方事件处理器（用于调试和监控）
+        # setup_function_call_event_handlers(llm, task)
 
         # 发送 StartFrame 初始化
         await task.queue_frames([StartFrame()])

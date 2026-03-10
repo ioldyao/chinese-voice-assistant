@@ -10,19 +10,31 @@ from .tts import TTSManager
 from .vision import VisionUnderstanding
 from .mcp_client import MCPClient, MCPManager, MCPResponse
 from .react_agent import ReactAgent, ReActParser, ReActStep
-from .qwen_llm_service import (
+# LLM 服务（从 llm_services 导入）
+from .llm_services import (
     QwenLLMService,
-    QwenLLMContext,
+    DeepSeekLLMService,
+    OpenAILLMServiceWrapper,
+    UnifiedLLMContext,
+    create_llm_service,
+    create_llm_context,
+    LLMFactory,
+)
+
+# MCP 工具转换器（从 qwen_llm_service 导入）
+from .qwen_llm_service import (
     mcp_tools_to_function_schemas,
     create_tools_schema_from_mcp,
     mcp_tools_to_openai_format,
     register_mcp_functions,
+    setup_function_call_event_handlers,
+    MCPFunctionCallLogger,
 )
 
 # pipecat_main 使用延迟导入，避免初始化时的阻塞
 # 使用时通过 from src.voice_assistant import pipecat_main 导入
 
-__version__ = "2.1.0"
+__version__ = "2.6.0"
 __all__ = [
     "SmartWakeWordSystem",
     "TTSManager",
@@ -33,10 +45,19 @@ __all__ = [
     "ReactAgent",
     "ReActParser",
     "ReActStep",
+    # LLM 服务
     "QwenLLMService",
-    "QwenLLMContext",
+    "DeepSeekLLMService",
+    "OpenAILLMServiceWrapper",
+    "UnifiedLLMContext",
+    "create_llm_service",
+    "create_llm_context",
+    "LLMFactory",
+    # MCP 工具
     "mcp_tools_to_function_schemas",
     "create_tools_schema_from_mcp",
     "mcp_tools_to_openai_format",
     "register_mcp_functions",
+    "setup_function_call_event_handlers",
+    "MCPFunctionCallLogger",
 ]
