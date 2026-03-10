@@ -1,17 +1,27 @@
 """Pipecat 适配器 - 封装现有组件为 Pipecat Processors"""
 import asyncio
 import numpy as np
+import tempfile
+import ctypes
+from ctypes import wintypes
+from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
+from PIL import ImageGrab, Image
 
-from pipecat.processors.frame_processor import FrameProcessor
+from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.frames.frames import (
     Frame,
     AudioRawFrame,
     TextFrame,
     TTSAudioRawFrame,
+    OutputAudioRawFrame,  # ✅ TTS 音频输出帧
     InterruptionFrame,  # ✅ 官方中断帧
     TTSStoppedFrame,    # ✅ 官方 TTS 停止帧
+    TranscriptionFrame,  # ✅ 用于 LLMUserContextAggregator
+    UserStartedSpeakingFrame,  # ✅ 用户开始说话
+    UserStoppedSpeakingFrame,  # ✅ 触发 LLM 处理
+    LLMFullResponseEndFrame,  # ✅ LLM 响应结束帧
     EndFrame,
 )
 
@@ -20,10 +30,12 @@ from pipecat.frames.frames import (
 
 class SherpaKWSProcessor(FrameProcessor):
     """
-    Sherpa-ONNX KWS 适配器
+    Sherpa-ONNX KWS 适配器（简化版 - 配合 Pipecat VAD）
 
-    将现有的 Sherpa-ONNX KWS 模型封装为 Pipecat Processor
-    处理音频帧，检测唤醒词，输出官方 InterruptionFrame
+    改进：
+    - ✅ 检测到唤醒词时发送 InterruptionFrame（中断 TTS）
+    - ✅ 依赖 Pipecat VAD 自动检测用户后续说话
+    - ✅ 职责明确，逻辑简化
     """
 
     def __init__(self, kws_model):
@@ -56,7 +68,8 @@ class SherpaKWSProcessor(FrameProcessor):
                 self.is_awake = True
                 self.last_keyword = result
 
-                # ✅ 发出官方中断帧（Pipecat 标准）
+                # ✅ 只发送中断帧（中断 TTS，如果正在播放）
+                # 注意：不发送 UserStartedSpeakingFrame，让 VAD 自动检测用户后续说话
                 await self.push_frame(
                     InterruptionFrame(),
                     direction
@@ -76,10 +89,16 @@ class SherpaKWSProcessor(FrameProcessor):
 
 class SherpaASRProcessor(FrameProcessor):
     """
-    Sherpa-ONNX ASR 适配器
+    Sherpa-ONNX ASR 适配器（v2.2 - VAD + Turn Detection）
 
-    将现有的 Sherpa-ONNX ASR 模型封装为 Pipecat Processor
-    检测到唤醒词后开始录音，使用静音检测自动停止，输出识别文本
+    改进：
+    - ✅ 使用 Pipecat Silero VAD（快速检测语音段，stop_secs=0.2）
+    - ✅ 使用 Smart Turn v3（智能判断对话完成，理解语言上下文）
+    - ✅ 响应 UserStartedSpeakingFrame 开始录音
+    - ✅ 响应 UserStoppedSpeakingFrame 停止录音并识别
+    - ✅ 只在唤醒后才响应 VAD（防止误触发）
+    - ✅ 保留超时保护（防止无限录音）
+    - ✅ Turn Detection 避免句子中间被打断
     """
 
     def __init__(self, asr_model, sample_rate=16000):
@@ -90,71 +109,100 @@ class SherpaASRProcessor(FrameProcessor):
         # 录音状态
         self.recording = False
         self.buffer = []
-
-        # 静音检测参数（与原有逻辑一致）
-        self.silence_threshold = 0.02
-        self.max_silence_frames = 20  # 约 1.3 秒
-        self.min_record_frames = 15   # 最小录音保护
-
-        self.silence_count = 0
-        self.has_speech = False
         self.frame_count = 0
+
+        # ✅ 唤醒状态（只在唤醒后才响应 VAD）
+        self.is_awake = False
+
+        # ✅ 超时保护（防止无限录音）
+        self.max_record_frames = 300  # 约 10 秒（300帧 × 32ms）
+        self.max_record_duration = 10.0  # 秒
 
     async def process_frame(self, frame, direction):
         """处理音频帧，识别语音"""
         await super().process_frame(frame, direction)
 
-        # ✅ 检测官方中断帧，开始录音
+        # ✅ 响应 KWS 的中断信号（唤醒系统 + 立即开始录音）
         if isinstance(frame, InterruptionFrame):
-            print("📝 开始录音识别...")
-            self.recording = True
+            print("🔔 收到唤醒信号，立即激活录音...")
+            # 清空之前的音频（可能是唤醒词本身）
             self.buffer = []
-            self.silence_count = 0
-            self.has_speech = False
             self.frame_count = 0
-
-            # 传递中断帧
+            # ✅ 激活系统并立即开始录音（不等 VAD 重新检测）
+            self.is_awake = True
+            self.recording = True  # 立即录音
+            print("📝 开始录音，等待用户指令...")
             await self.push_frame(frame, direction)
             return
 
-        # 录音过程
+        # ✅ 响应 Pipecat VAD 的开始说话信号（只在唤醒后）
+        if isinstance(frame, UserStartedSpeakingFrame):
+            if self.is_awake and not self.recording:
+                # 只在未录音时才开始（避免清空已录音频）
+                print("📝 VAD 检测到开始说话，开始录音...")
+                self.recording = True
+                self.buffer = []
+                self.frame_count = 0
+            # 如果已经在录音，忽略（唤醒后已经开始录音）
+            await self.push_frame(frame, direction)
+            return
+
+        # ✅ 响应 Pipecat VAD 的停止说话信号（只在唤醒后）
+        if isinstance(frame, UserStoppedSpeakingFrame):
+            if self.is_awake and self.recording:
+                print("✓ VAD 检测到停止说话，开始识别...")
+
+                if self.buffer:
+                    # 拼接音频
+                    full_audio = np.concatenate(self.buffer)
+
+                    # ASR 识别
+                    text = await self._recognize_async(full_audio)
+
+                    if text:
+                        print(f"✓ 识别结果: {text}")
+                        # ✅ 使用 TranscriptionFrame（LLMUserContextAggregator 期望的类型）
+                        await self.push_frame(
+                            TranscriptionFrame(text=text, user_id="user", timestamp=self._get_timestamp()),
+                            direction
+                        )
+
+                # 重置状态（等待下次唤醒）
+                self.recording = False
+                self.buffer = []
+                self.frame_count = 0
+                self.is_awake = False
+                print("💤 ASR 休眠，等待下次唤醒...")
+
+            await self.push_frame(frame, direction)
+            return
+
+        # ✅ 录音过程（简化 - 只缓冲音频）
         if self.recording and isinstance(frame, AudioRawFrame):
             # 提取音频数据
             audio_data = np.frombuffer(frame.audio, dtype=np.int16).astype(np.float32) / 32768.0
             self.buffer.append(audio_data)
             self.frame_count += 1
 
-            # 计算音量
-            volume = np.sqrt(np.mean(audio_data**2))
-
-            # 静音检测
-            if volume >= self.silence_threshold:
-                self.has_speech = True
-                self.silence_count = 0
-            else:
-                self.silence_count += 1
-
-            # 停止条件：有语音 + 连续静音 + 超过最小保护帧
-            if (self.has_speech and
-                self.silence_count > self.max_silence_frames and
-                self.frame_count > self.min_record_frames):
-
-                # 拼接音频
-                full_audio = np.concatenate(self.buffer)
-
-                # ASR 识别
-                text = await self._recognize_async(full_audio)
-
-                if text:
-                    print(f"✓ 识别结果: {text}")
-                    await self.push_frame(
-                        TextFrame(text=text),
-                        direction
-                    )
+            # ✅ 超时保护
+            if self.frame_count > self.max_record_frames:
+                print(f"⚠️ 录音超时（{self.max_record_duration}秒），强制停止")
+                # 强制触发识别
+                if self.buffer:
+                    full_audio = np.concatenate(self.buffer)
+                    text = await self._recognize_async(full_audio)
+                    if text:
+                        print(f"✓ 识别结果（超时）: {text}")
+                        await self.push_frame(
+                            TranscriptionFrame(text=text, user_id="user", timestamp=self._get_timestamp()),
+                            direction
+                        )
 
                 # 重置状态
                 self.recording = False
                 self.buffer = []
+                self.frame_count = 0
+                return
 
             # 继续传递音频帧
             await self.push_frame(frame, direction)
@@ -173,6 +221,11 @@ class SherpaASRProcessor(FrameProcessor):
 
         # 在线程池中执行（避免阻塞事件循环）
         return await asyncio.to_thread(_recognize_sync)
+
+    def _get_timestamp(self):
+        """获取当前时间戳（ISO 8601 格式）"""
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).isoformat()
 
 
 # ==================== React Agent Processor ====================
@@ -267,19 +320,29 @@ class ReactAgentProcessor(FrameProcessor):
 
 class PiperTTSProcessor(FrameProcessor):
     """
-    Piper TTS 适配器
+    Piper TTS 适配器 - 句子级流式播放（符合 Pipecat 标准）
 
-    将现有的 TTSManagerStreaming 封装为 Pipecat Processor
-    接收文本帧，生成音频帧并直接播放
-    响应官方 InterruptionFrame，发出 TTSStoppedFrame
+    改进：
+    - ✅ 生成标准 OutputAudioRawFrame（不直接播放）
+    - ✅ 让 transport.output() 负责实际播放
+    - ✅ 支持中断和句子级缓冲
     """
 
-    def __init__(self, tts_manager, transport=None):
+    def __init__(self, tts_manager):
         super().__init__()
         self.tts = tts_manager
-        self.transport = transport  # 用于直接播放音频
         self.interrupt_flag = False  # 中断标志
         self.is_speaking = False  # TTS 播放状态
+
+        # 句子缓冲区（按句子流式播放）
+        self.sentence_buffer = ""
+        self.sentence_delimiters = ["。", "！", "？", ".", "!", "?", "\n"]
+
+        # ✅ 保存主事件循环引用（用于线程池中推送帧）
+        self._loop = None
+
+        # ✅ LLM 输出显示（用于终端可见性）
+        self._llm_started = False
 
     def interrupt(self):
         """中断当前TTS播放"""
@@ -289,33 +352,68 @@ class PiperTTSProcessor(FrameProcessor):
         """处理文本帧，生成 TTS 音频"""
         await super().process_frame(frame, direction)
 
-        # ✅ 响应官方中断帧，设置中断
+        # ✅ 第一次处理帧时，保存事件循环引用
+        if self._loop is None:
+            self._loop = asyncio.get_event_loop()
+
+        # ✅ 实时显示 LLM 输出（流式效果）
+        if isinstance(frame, TextFrame):
+            # 第一个 token 时打印提示
+            if not self._llm_started:
+                print("\n🤖 LLM: ", end="", flush=True)
+                self._llm_started = True
+            # 打印文本 token（不换行）
+            print(frame.text, end="", flush=True)
+
+        # 检测 LLM 响应结束（播放剩余缓冲）
+        if isinstance(frame, LLMFullResponseEndFrame):
+            # 结束时换行
+            if self._llm_started:
+                print("\n")  # 换行结束
+                self._llm_started = False
+
+        # 响应官方中断帧，设置中断
         if isinstance(frame, InterruptionFrame):
             if self.is_speaking:
                 print("⏸️  检测到中断信号，停止TTS播放")
                 self.interrupt()
+            # 清空缓冲区
+            self.sentence_buffer = ""
+            # 重置 LLM 输出标志
+            self._llm_started = False
             # 传递中断帧
             await self.push_frame(frame, direction)
             return
 
+        # 检测 LLM 响应结束（播放剩余缓冲）
+        if isinstance(frame, LLMFullResponseEndFrame):
+            # 播放剩余的不完整句子
+            if self.sentence_buffer.strip():
+                await self._synthesize_and_push(self.sentence_buffer)
+                self.sentence_buffer = ""
+
+            # 发送 turn 结束信号
+            if not self.is_speaking:
+                await self.push_frame(UserStoppedSpeakingFrame(), direction)
+
+            await self.push_frame(frame, direction)
+            return
+
+        # 流式处理文本帧（句子级缓冲）
         if isinstance(frame, TextFrame):
-            print(f"🔊 TTS 合成: {frame.text}")
+            self.sentence_buffer += frame.text
 
-            # 重置中断标志，标记为播放中
-            self.interrupt_flag = False
-            self.is_speaking = True
+            # 检查是否有完整句子
+            for delimiter in self.sentence_delimiters:
+                if delimiter in self.sentence_buffer:
+                    # 分割句子
+                    parts = self.sentence_buffer.split(delimiter, 1)
+                    sentence = parts[0] + delimiter  # 包含标点符号
+                    self.sentence_buffer = parts[1] if len(parts) > 1 else ""
 
-            # 在线程池中生成和播放音频
-            was_interrupted = await asyncio.to_thread(
-                self._synthesize_and_play_sync,
-                frame.text
-            )
-
-            # ✅ TTS 播放结束，发出官方停止帧
-            self.is_speaking = False
-            if was_interrupted:
-                print("⏸️  TTS 已被中断")
-                await self.push_frame(TTSStoppedFrame(), direction)
+                    # 立即合成完整句子（静默，只在需要时打印）
+                    await self._synthesize_and_push(sentence.strip())
+                    break
 
             # 传递原始文本帧
             await self.push_frame(frame, direction)
@@ -323,9 +421,34 @@ class PiperTTSProcessor(FrameProcessor):
             # 其他帧直接传递
             await self.push_frame(frame, direction)
 
-    def _synthesize_and_play_sync(self, text) -> bool:
+    async def _synthesize_and_push(self, text: str):
         """
-        同步 TTS 合成并播放（在线程池中执行），支持中断
+        异步合成并推送音频帧（符合 Pipecat 标准）
+
+        改进：生成 OutputAudioRawFrame 而不是直接播放
+        """
+        if not text:
+            return
+
+        self.interrupt_flag = False
+        self.is_speaking = True
+
+        # 在线程池中执行合成
+        was_interrupted = await asyncio.to_thread(
+            self._synthesize_and_push_sync,
+            text
+        )
+
+        self.is_speaking = False
+        if was_interrupted:
+            print("⏸️  TTS 已被中断")
+            await self.push_frame(TTSStoppedFrame(), FrameDirection.DOWNSTREAM)
+
+    def _synthesize_and_push_sync(self, text: str) -> bool:
+        """
+        同步 TTS 合成（在线程池中执行），支持中断
+
+        改进：生成 OutputAudioRawFrame 而不是直接播放
 
         Returns:
             bool: 是否被中断
@@ -338,7 +461,7 @@ class PiperTTSProcessor(FrameProcessor):
                 for chunk in audio_generator:
                     # 检查中断标志
                     if self.interrupt_flag:
-                        print("⏸️  TTS 播放已中断")
+                        print("⏸️  TTS 合成已中断")
                         return True  # 返回中断标志
 
                     # 提取音频数据
@@ -348,12 +471,205 @@ class PiperTTSProcessor(FrameProcessor):
                     # 转换为 int16
                     audio_int16 = (audio_float * 32767).astype(np.int16)
 
-                    # 直接播放到 transport
-                    if self.transport and self.transport.output_stream:
-                        self.transport.output_stream.write(audio_int16.tobytes())
+                    # ✅ 生成标准 OutputAudioRawFrame（而不是直接播放）
+                    audio_frame = OutputAudioRawFrame(
+                        audio=audio_int16.tobytes(),
+                        sample_rate=sample_rate,
+                        num_channels=1
+                    )
+
+                    # ✅ 推送到 Pipeline（让 transport.output() 播放）
+                    # 使用保存的事件循环引用在主线程中推送
+                    if self._loop:
+                        future = asyncio.run_coroutine_threadsafe(
+                            self.push_frame(audio_frame, FrameDirection.DOWNSTREAM),
+                            self._loop
+                        )
+                        # 等待推送完成
+                        future.result(timeout=1.0)
 
                 return False  # 正常完成，未中断
 
             except Exception as e:
                 print(f"❌ TTS 生成失败: {e}")
                 return False
+
+        return False
+
+
+# ==================== Vision Processor (符合 Pipecat 标准) ====================
+
+class VisionProcessor(FrameProcessor):
+    """
+    Vision Processor - 支持多种视觉模型的统一接口
+
+    架构改进：
+    - ✅ 支持多种视觉模型（Moondream 本地、Qwen-VL API 等）
+    - ✅ 通过 .env 配置切换模型
+    - ✅ 工厂模式动态创建服务
+    - ✅ 接收 LLMContext，直接修改 context
+    - ✅ 符合 Pipecat 官方架构
+    """
+
+    def __init__(self, context, **vision_kwargs):
+        """
+        初始化 VisionProcessor
+
+        Args:
+            context: LLMContext 实例
+            **vision_kwargs: 传递给 VisionFactory 的参数
+                - service: 服务名称（moondream/qwen-vl-plus/qwen-vl-max）
+                - use_cpu: 是否使用 CPU（仅 Moondream）
+                - api_url: API URL（仅 Qwen-VL）
+                - api_key: API 密钥（仅 Qwen-VL）
+        """
+        super().__init__()
+        self.context = context  # LLMContext 实例
+
+        # ✅ 追踪已处理的消息（避免重复处理）
+        self._processed_messages = set()
+
+        # ✅ 使用工厂创建 Vision 服务
+        from .vision_services import create_vision_service
+        self.vision_service = create_vision_service(**vision_kwargs)
+        print(f"✓ Vision 服务: {self.vision_service.get_model_name()}")
+
+        # Vision 关键词
+        self.vision_keywords = [
+            "看", "查看", "讲解", "描述", "显示什么", "显示的",
+            "分析", "识别", "内容是", "画面", "截图", "图片",
+            "界面", "当前", "屏幕"
+        ]
+        self.operation_keywords = [
+            "点击", "输入", "打开", "关闭", "启动", "切换",
+            "滚动", "搜索", "执行", "运行", "按"
+        ]
+
+    def _needs_vision(self, text: str) -> bool:
+        """判断是否需要视觉理解"""
+        # 操作关键词优先（React 模式）
+        if any(kw in text for kw in self.operation_keywords):
+            return False
+        # 视觉关键词
+        return any(kw in text for kw in self.vision_keywords)
+
+    async def _capture_screenshot_async(self):
+        """异步截图，返回 PIL Image 对象"""
+        def capture():
+            from PIL import ImageGrab
+
+            # 尝试窗口截图
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                # 设置 DPI 感知
+                try:
+                    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+                except:
+                    pass
+
+                # 获取前台窗口
+                hwnd = ctypes.windll.user32.GetForegroundWindow()
+                if hwnd:
+                    rect = wintypes.RECT()
+                    ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+
+                    # 修正边框
+                    padding = 8
+                    bbox = (
+                        rect.left + padding,
+                        rect.top,
+                        rect.right - padding,
+                        rect.bottom - padding
+                    )
+                    screenshot = ImageGrab.grab(bbox=bbox)
+                else:
+                    screenshot = ImageGrab.grab()
+            except Exception:
+                # 降级到全屏
+                screenshot = ImageGrab.grab()
+
+            return screenshot
+
+        return await asyncio.to_thread(capture)
+
+    async def _call_vision_service(self, image: Image, question: str) -> str:
+        """
+        调用 Vision 服务分析图片（统一接口）
+
+        Args:
+            image: PIL Image 对象
+            question: 用户问题（中文）
+
+        Returns:
+            str: 图片描述结果
+        """
+        try:
+            result = await self.vision_service.analyze_image(image, question)
+            return result
+        except Exception as e:
+            return f"Vision 服务处理失败: {str(e)}"
+
+    async def process_frame(self, frame, direction):
+        """处理帧"""
+        await super().process_frame(frame, direction)
+
+        # 响应中断
+        if isinstance(frame, InterruptionFrame):
+            await self.push_frame(frame, direction)
+            return
+
+        # ✅ 只处理 OpenAILLMContextFrame（user_aggregator 推送的帧）
+        from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContextFrame
+
+        if isinstance(frame, OpenAILLMContextFrame):
+            # 检查 context 中的最后一条用户消息
+            if self.context.messages:
+                last_message = self.context.messages[-1]
+
+                # 只处理用户消息
+                if last_message.get("role") == "user":
+                    text_content = last_message.get("content", "")
+
+                    # ✅ 使用消息内容的 hash 作为唯一标识
+                    message_id = hash(text_content)
+
+                    # ✅ 检查是否已处理过这条消息
+                    if message_id in self._processed_messages:
+                        # 已处理，跳过
+                        await self.push_frame(frame, direction)
+                        return
+
+                    if self._needs_vision(text_content):
+                        print(f"🔍 Vision 模式: {text_content}")
+
+                        # ✅ 标记为已处理（在处理前，防止并发重复）
+                        self._processed_messages.add(message_id)
+
+                        try:
+                            # 异步截图
+                            image = await self._capture_screenshot_async()
+
+                            # 调用 Vision 服务（支持多模型）
+                            print(f"📸 调用 Vision 服务: {self.vision_service.get_model_name()}...")
+                            result = await self._call_vision_service(image, text_content)
+
+                            print(f"📊 Vision 结果: {result}")
+
+                            # ✅ 将 Vision 结果附加到最后一条 user 消息（而不是新增 system 消息）
+                            # 这样 LLM 知道需要基于这个回复
+                            last_message["content"] = f"{text_content}\n\n[视觉观察] {result}"
+
+                            # ✅ 推送新的 OpenAILLMContextFrame（触发 LLM 生成响应）
+                            print("✅ 推送更新后的 context 到 LLM...")
+                            await self.push_frame(OpenAILLMContextFrame(self.context), direction)
+                            return  # 不推送原来的帧
+
+                        except Exception as e:
+                            print(f"❌ Vision 处理失败: {e}")
+                            import traceback
+                            traceback.print_exc()
+
+        # ✅ 传递所有其他帧
+        await self.push_frame(frame, direction)

@@ -1,58 +1,43 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-智能语音助手 - 主程序入口
+中文智能语音助手 v2.6.0
+
+功能特性：
+  ✅ 唤醒词检测（小智）
+  ✅ 中文语音识别（Sherpa-ONNX）
+  ✅ 多 LLM 服务（Qwen/DeepSeek/OpenAI）
+  ✅ 多 Vision 模型（Qwen-VL / Moondream）
+  ✅ 语音合成（Piper TTS）
+  ✅ MCP 工具集成（Playwright 浏览器控制）
+
+重构亮点：
+  ✨ 基于 Pipecat 官方实现
+  ✨ 保留 Qwen3 优化和 Bug 修复
+  ✨ 使用官方 Function Calling API
+  ✨ 完整文档和类型注解
+
+使用方法：
+  uv run python main.py
 """
+
+import asyncio
 
 
 def main():
     """主函数"""
-    print("=" * 60)
-    print("🚀 智能语音助手 - 双阶段识别版")
-    print("=" * 60)
-
-    print("\n请选择运行模式：")
-    print("  1. 传统模式 (原有架构)")
-    print("  2. Pipecat 模式 (新架构，实验性)")
-    mode_choice = input("请选择 (1/2，默认1): ").strip() or "1"
-
-    if mode_choice == "2":
-        # ==================== Pipecat 模式 ====================
-        print("\n✨ 启动 Pipecat 模式...")
-        try:
-            from src.voice_assistant import pipecat_main
-            import asyncio
-            asyncio.run(pipecat_main.main())
-        except ImportError as e:
-            print(f"❌ Pipecat 模式不可用: {e}")
-            print("💡 请先安装依赖: pip install -e .")
-        except Exception as e:
-            print(f"❌ Pipecat 模式启动失败: {e}")
-            import traceback
-            traceback.print_exc()
-
-    else:
-        # ==================== 传统模式 ====================
-        print("\n✨ 启动传统模式...")
-        print("功能: KWS关键词唤醒 + ASR语音识别 + 视觉理解 + 系统控制")
-
-        print("\n是否开启语音播报？")
-        print("  1. 是（推荐）")
-        print("  2. 否")
-        choice = input("请选择 (1/2，默认1): ").strip() or "1"
-        enable_voice = (choice == "1")
-
-        try:
-            from src.voice_assistant import SmartWakeWordSystem
-            system = SmartWakeWordSystem(enable_voice=enable_voice)
-            system.start_listening()
-        except KeyboardInterrupt:
-            print("\n👋 再见！")
-        except Exception as e:
-            print(f"❌ 启动失败: {e}")
-            import traceback
-            traceback.print_exc()
+    print("🚀 启动中文智能语音助手 v2.6.0 - 重构版")
+    print("✨ 基于 Pipecat 官方实现 + 保留用户优化\n")
+    from src.voice_assistant import pipecat_main_v2
+    asyncio.run(pipecat_main_v2.main())
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n👋 已退出")
+    except Exception as e:
+        print(f"\n❌ 启动失败: {e}")
+        import traceback
+        traceback.print_exc()

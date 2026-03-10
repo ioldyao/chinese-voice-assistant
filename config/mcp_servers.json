@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "description": "MCP Server 配置文件 - 管理所有 MCP (Model Context Protocol) Server",
+  "version": "1.0",
+  "servers": [
+    {
+      "name": "playwright",
+      "description": "浏览器自动化 - 网页导航、点击、输入、截图等（工具列表由 MCP Server 自动提供）",
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"],
+      "timeout": 120,
+      "enabled": true
+    },
+    {
+      "name": "windows",
+      "description": "Windows 系统操作 - 鼠标点击、键盘输入、应用启动等（工具列表由 MCP Server 自动提供）",
+      "command": "uvx",
+      "args": ["windows-mcp"],
+      "timeout": 60,
+      "enabled": false
+    },
+    {
+      "name": "filesystem",
+      "description": "文件系统操作 - 文件读取、写入、搜索等（工具列表由 MCP Server 自动提供）",
+      "command": "npx",
+      "args": [
+        "@modelcontextprotocol/server-filesystem@latest",
+        "C:\\Users\\iEZELL\\chinese-voice-assistant"
+      ],
+      "timeout": 60,
+      "enabled": false
+    },
+    {
+      "name": "github",
+      "description": "GitHub 操作 - 仓库管理、Issue、PR 等（工具列表由 MCP Server 自动提供）",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "your-github-token-here"
+      },
+      "timeout": 60,
+      "enabled": false
+    }
+  ],
+  "_comments": {
+    "说明": "工具列表会在 Server 启动后通过 MCP 协议自动获取（session.list_tools()），无需在配置中指定",
+    "name": "Server 唯一标识符",
+    "description": "Server 功能描述（工具列表由 Server 运行时提供）",
+    "command": "启动命令（如 npx, uvx, python）",
+    "args": "命令参数列表",
+    "env": "环境变量（可选，用于 API Token 等）",
+    "timeout": "启动超时时间（秒）",
+    "enabled": "是否启用该 Server（true/false）"
+  }
+}
