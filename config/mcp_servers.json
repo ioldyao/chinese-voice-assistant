@@ -8,7 +8,7 @@
       "description": "浏览器自动化 - 网页导航、点击、输入、截图等（工具列表由 MCP Server 自动提供）",
       "command": "npx",
       "args": ["@playwright/mcp@latest"],
-      "timeout": 120,
+      "timeout": 180,
       "enabled": true
     },
     {

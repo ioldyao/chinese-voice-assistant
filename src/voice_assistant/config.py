@@ -3,10 +3,15 @@ import os
 import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from dotenv import load_dotenv
 
-# 加载 .env 文件
-load_dotenv()
+# 尝试加载 .env 文件（如果 dotenv 可用）
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # dotenv 未安装时，跳过 .env 文件加载
+    # 依赖环境变量或其他配置方式
+    pass
 
 # ==================== LLM 配置 - 从环境变量读取 ====================
 # 指定使用哪个 LLM 服务

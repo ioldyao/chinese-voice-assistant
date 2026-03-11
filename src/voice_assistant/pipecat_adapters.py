@@ -534,24 +534,7 @@ class VisionProcessor(FrameProcessor):
         self.vision_service = create_vision_service(**vision_kwargs)
         print(f"✓ Vision 服务: {self.vision_service.get_model_name()}")
 
-        # Vision 关键词
-        self.vision_keywords = [
-            "看", "查看", "讲解", "描述", "显示什么", "显示的",
-            "分析", "识别", "内容是", "画面", "截图", "图片",
-            "界面", "当前", "屏幕"
-        ]
-        self.operation_keywords = [
-            "点击", "输入", "打开", "关闭", "启动", "切换",
-            "滚动", "搜索", "执行", "运行", "按"
-        ]
-
-    def _needs_vision(self, text: str) -> bool:
-        """判断是否需要视觉理解"""
-        # 操作关键词优先（React 模式）
-        if any(kw in text for kw in self.operation_keywords):
-            return False
-        # 视觉关键词
-        return any(kw in text for kw in self.vision_keywords)
+        # ❌ 移除硬编码触发规则 - 由 LLM 自主判断
 
     async def _capture_screenshot_async(self):
         """异步截图，返回 PIL Image 对象"""
@@ -612,64 +595,10 @@ class VisionProcessor(FrameProcessor):
             return f"Vision 服务处理失败: {str(e)}"
 
     async def process_frame(self, frame, direction):
-        """处理帧"""
+        """处理帧 - 仅转发，不做自动触发"""
         await super().process_frame(frame, direction)
 
-        # 响应中断
-        if isinstance(frame, InterruptionFrame):
-            await self.push_frame(frame, direction)
-            return
-
-        # ✅ 只处理 OpenAILLMContextFrame（user_aggregator 推送的帧）
-        from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContextFrame
-
-        if isinstance(frame, OpenAILLMContextFrame):
-            # 检查 context 中的最后一条用户消息
-            if self.context.messages:
-                last_message = self.context.messages[-1]
-
-                # 只处理用户消息
-                if last_message.get("role") == "user":
-                    text_content = last_message.get("content", "")
-
-                    # ✅ 使用消息内容的 hash 作为唯一标识
-                    message_id = hash(text_content)
-
-                    # ✅ 检查是否已处理过这条消息
-                    if message_id in self._processed_messages:
-                        # 已处理，跳过
-                        await self.push_frame(frame, direction)
-                        return
-
-                    if self._needs_vision(text_content):
-                        print(f"🔍 Vision 模式: {text_content}")
-
-                        # ✅ 标记为已处理（在处理前，防止并发重复）
-                        self._processed_messages.add(message_id)
-
-                        try:
-                            # 异步截图
-                            image = await self._capture_screenshot_async()
-
-                            # 调用 Vision 服务（支持多模型）
-                            print(f"📸 调用 Vision 服务: {self.vision_service.get_model_name()}...")
-                            result = await self._call_vision_service(image, text_content)
-
-                            print(f"📊 Vision 结果: {result}")
-
-                            # ✅ 将 Vision 结果附加到最后一条 user 消息（而不是新增 system 消息）
-                            # 这样 LLM 知道需要基于这个回复
-                            last_message["content"] = f"{text_content}\n\n[视觉观察] {result}"
-
-                            # ✅ 推送新的 OpenAILLMContextFrame（触发 LLM 生成响应）
-                            print("✅ 推送更新后的 context 到 LLM...")
-                            await self.push_frame(OpenAILLMContextFrame(self.context), direction)
-                            return  # 不推送原来的帧
-
-                        except Exception as e:
-                            print(f"❌ Vision 处理失败: {e}")
-                            import traceback
-                            traceback.print_exc()
-
-        # ✅ 传递所有其他帧
+        # ❌ 移除自动触发逻辑 - 由 LLM 自主判断是否使用 Vision
+        # 直接转发所有帧
         await self.push_frame(frame, direction)
+
