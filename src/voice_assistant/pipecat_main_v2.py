@@ -70,6 +70,9 @@ from .config import (
     get_mcp_server_info,
 )
 
+# ✅ 导入 Agent Skills（Claude Code 设计）
+from .skills import SkillManager
+
 
 async def create_pipecat_pipeline():
     """
@@ -85,11 +88,12 @@ async def create_pipecat_pipeline():
     ✅ Vision 直接修改 context（不推送新 Frame）
     """
     print("\n" + "="*60)
-    print("🎙️  中文语音助手 v2.6.0 - 重构版（官方架构 + 用户优化）")
+    print("🎙️  中文语音助手 v3.1.0 - Claude Code 技能系统")
     print("="*60)
     print("✨ 基于 Pipecat 官方实现")
     print("✨ 保留 Qwen3 优化和 Bug 修复")
-    print("✨ 使用官方 Function Calling API")
+    print("✨ Agent Skills：Claude Code 设计（LLM 自主判断）")
+    print("✨ 零停用词、零关键词匹配、零干扰")
     print("="*60)
 
     # 1. 初始化现有组件
@@ -108,32 +112,31 @@ async def create_pipecat_pipeline():
     # ✅ 从配置文件加载 Server 列表
     servers = load_mcp_servers_config()
 
+    mcp_tools = []
     if not servers:
-        print(f"❌ 没有已启用的 MCP Server")
-        raise RuntimeError("没有已启用的 MCP Server")
-
-    success_count = 0
-    for server_config in servers:
-        try:
-            success = await mcp.add_server_async(
-                name=server_config["name"],
-                command=server_config["command"],
-                args=server_config["args"],
-                timeout=server_config["timeout"]
-            )
-            if success:
-                success_count += 1
-        except Exception as e:
-            print(f"  ❌ {server_config['name']} Server 启动失败: {e}")
-            continue
-
-    if success_count > 0:
-        mcp_tools = await mcp.list_all_tools_async()
-        playwright_tools = [t for t in mcp_tools if t.get("server") == "playwright"]
-        print(f"✓ Playwright MCP 已启动（{len(playwright_tools)} 个工具）")
+        print(f"⚠️  没有已启用的 MCP Server（浏览器工具将不可用）")
     else:
-        print(f"❌ MCP Server 启动失败")
-        raise RuntimeError("MCP Server 启动失败")
+        success_count = 0
+        for server_config in servers:
+            try:
+                success = await mcp.add_server_async(
+                    name=server_config["name"],
+                    command=server_config["command"],
+                    args=server_config["args"],
+                    timeout=server_config["timeout"]
+                )
+                if success:
+                    success_count += 1
+            except Exception as e:
+                print(f"  ❌ {server_config['name']} Server 启动失败: {e}")
+                continue
+
+        if success_count > 0:
+            mcp_tools = await mcp.list_all_tools_async()
+            playwright_tools = [t for t in mcp_tools if t.get("server") == "playwright"]
+            print(f"✓ Playwright MCP 已启动（{len(playwright_tools)} 个工具）")
+        else:
+            print(f"⚠️  所有 MCP Server 启动失败（浏览器工具将不可用）")
 
     # 2. 初始化 LLM Service（使用工厂模式）
     print("⏳ 初始化 LLM Service...")
@@ -178,43 +181,110 @@ async def create_pipecat_pipeline():
     print(f"  - 服务: {LLM_SERVICE}")
     print(f"  - 模型: {model_name}")
 
+    # ✅ 初始化 Agent Skills（需要在注册 MCP 之前）
+    print("⏳ 初始化 Agent Skills...")
+
+    # 获取项目根目录的 skills 目录
+    project_root = Path(__file__).parent.parent.parent
+    skills_dir = project_root / "skills"
+
+    # 创建技能管理器
+    skill_manager = SkillManager(skills_dir)
+    await skill_manager.initialize()
+
+    # 设置 LLM 服务（注册 skill_execute 函数）
+    skill_manager.set_llm_service(llm)
+
+    # 获取技能描述（注入到 system prompt）
+    skills_prompt = skill_manager.get_skills_prompt()
+
+    print("✓ Agent Skills 已初始化（Claude Code 设计）")
+
     # 注册 MCP 函数处理器（使用官方 register_function API）
-    await register_mcp_functions(llm, mcp)
+    await register_mcp_functions(llm, mcp, skill_manager)
     print("✓ 已使用官方 API 注册 MCP 函数处理器")
 
     # 创建 Tools（OpenAI API 格式）
     tools = mcp_tools_to_openai_format(mcp_tools)
 
+    # ✅ 添加 skill_execute 工具到 tools 列表
+    skill_execute_tool = {
+        "type": "function",
+        "function": {
+            "name": "skill_execute",
+            "description": "执行指定的技能函数。当用户需要使用某个技能时（如查询天气、管理日程、浏览器控制），调用此函数。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "技能名称（如：weather, calendar, browser）"
+                    },
+                    "user_input": {
+                        "type": "string",
+                        "description": "用户的原始输入"
+                    }
+                },
+                "required": ["skill_name", "user_input"]
+            }
+        }
+    }
+    tools.append(skill_execute_tool)
+
+    # ✅ 添加 Open-Meteo 天气查询工具（免费，无需API密钥）
+    weather_tool = {
+        "type": "function",
+        "function": {
+            "name": "openmeteo_weather",
+            "description": "查询全球城市的实时天气信息。使用 Open-Meteo API 获取温度、湿度、风速等数据（免费，无需API密钥）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {
+                        "type": "string",
+                        "description": "城市名称（中文或英文，如：北京、Beijing、广州、Guangzhou、上海、Shanghai）"
+                    }
+                },
+                "required": ["city"]
+            }
+        }
+    }
+    tools.append(weather_tool)
+
     # 创建对话上下文
     messages = [
         {
             "role": "system",
-            "content": """你是一个智能语音助手，可以使用浏览器工具和视觉理解能力帮助用户。
+            "content": f"""你是一个智能语音助手，可以使用浏览器工具和视觉理解能力帮助用户。
 
-可用工具：
+{skills_prompt}
+
+## 可用工具
+
 - Playwright 浏览器操作（导航、点击、输入、滚动等）
+- skill_execute：执行技能（参数：skill_name, user_input）
 
-能力：
+## 能力
+
 - 视觉理解：可以看到并描述屏幕内容
 
-重要规则：
-1. **操作场景**（用户要求"打开"、"点击"、"输入"等）：
+## 重要规则
+
+1. **技能使用**（用户需要技能帮助时）：
+   - 根据用户需求，判断是否需要使用技能
+   - 如果需要，调用 skill_execute(skill_name="技能名", user_input="用户输入")
+   - 不要重复调用同一个技能
+
+2. **浏览器操作**（用户要求"打开"、"点击"、"输入"等）：
    - **点击元素前必须先调用 browser_snapshot 获取最新页面快照**
    - 使用快照中的 ref 编号进行点击操作
    - 如果点击失败（ref not found），立即重新调用 browser_snapshot 获取新快照
    - 工具调用成功后，用简短的中文确认（如"好的，已经点击"）
-   - 不要重复调用同一个工具
 
-2. **视觉理解场景**（用户要求"查看"、"看"、"描述"等）：
+3. **视觉理解**（用户要求"查看"、"看"、"描述"等）：
    - 如果收到 `[视觉观察]` 开头的消息，说明系统已经完成截图和视觉分析
    - 用自然、简洁的语言向用户描述屏幕内容
    - 突出关键信息，准确描述画面内容
-
-3. **执行流程示例**：
-   用户："点击动态按钮"
-   → 步骤1：调用 browser_snapshot（获取页面元素和ref）
-   → 步骤2：调用 browser_click（使用快照中的ref点击）
-   → 步骤3：回复"好的，已经点击"
 
 4. 不要主动询问用户是否需要其他帮助"""
         }
@@ -291,7 +361,7 @@ async def create_pipecat_pipeline():
 
     print("✓ Transport 已启动")
 
-    # 6. ✅ 构建 Pipeline（官方标准顺序 + TTS 调整）
+    # 6. ✅ 构建 Pipeline（官方标准顺序，无 SkillProcessor）
     print("⏳ 构建 Pipeline...")
 
     pipeline = Pipeline([
@@ -300,7 +370,8 @@ async def create_pipecat_pipeline():
         asr_proc,                       # 3. ASR 识别（响应 VAD frames）
         user_aggregator,                # 4. ✅ 添加用户消息到 context（紧跟 ASR）
         vision_proc,                    # 5. ✅ Vision（直接修改 context）
-        llm,                            # 6. ✅ LLM 生成（已注册 MCP 函数）
+        # ❌ skill_proc 已移除 - v3.0 使用独立集成层
+        llm,                            # 6. ✅ LLM 生成（已注册 MCP 函数 + 技能函数）
         tts_proc,                       # 7. ✅ TTS 合成（在 aggregator 之前，接收 LLMTextFrame）
         assistant_aggregator,           # 8. ✅ 保存助手响应（收集 LLMTextFrame 到 context）
         transport.output(),             # 9. ✅ 官方音频输出
@@ -315,21 +386,22 @@ async def create_pipecat_pipeline():
     print("   按 Ctrl+C 退出")
     print("")
 
-    return pipeline, transport, wake_system, mcp
+    return pipeline, transport, wake_system, mcp, skill_manager, vision_proc
 
 
 async def main():
-    """Pipecat 主程序 - v2.0（官方架构）"""
+    """Pipecat 主程序 - v3.1（官方架构 + Claude Code 技能系统）"""
     pipeline = None
     transport = None
     wake_system = None
     mcp = None
+    skill_manager = None
     task = None
     runner_task = None
 
     try:
         # 创建 Pipeline
-        pipeline, transport, wake_system, mcp = await create_pipecat_pipeline()
+        pipeline, transport, wake_system, mcp, skill_manager, vision_proc = await create_pipecat_pipeline()
 
         # 创建 PipelineTask
         task = PipelineTask(
@@ -341,19 +413,50 @@ async def main():
             )
         )
 
-        # 可选：设置官方事件处理器（用于调试和监控）
-        # setup_function_call_event_handlers(llm, task)
-
         # 发送 StartFrame 初始化
         await task.queue_frames([StartFrame()])
+
+        print("✓ StartFrame 已发送")
 
         # 创建 PipelineRunner 并运行
         runner = PipelineRunner()
 
+        print("✓ PipelineRunner 已创建")
+
         # ✅ 运行 Pipeline（官方方式）
         # 创建后台任务，以便可以响应 Ctrl+C
+        print("⏳ 启动 Pipeline...")
         runner_task = asyncio.create_task(runner.run(task))
-        await runner_task
+
+        try:
+            # 等待一小段时间，确保 Pipeline 正常启动
+            await asyncio.sleep(1.0)
+
+            # 检查任务状态
+            if runner_task.done():
+                # 任务已完成（异常）
+                try:
+                    result = runner_task.result()
+                    print(f"⚠️  Pipeline 任务意外完成: {result}")
+                except Exception as e:
+                    print(f"❌ Pipeline 启动失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    raise
+            else:
+                print("✓ Pipeline 正在运行（等待音频输入或唤醒词）")
+
+            # 等待任务完成（应该一直运行直到 Ctrl+C）
+            await runner_task
+
+        except asyncio.CancelledError:
+            print("\n⏹️  Pipeline 任务已取消")
+            raise
+        except Exception as e:
+            print(f"❌ Pipeline 运行出错: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     except KeyboardInterrupt:
         print("\n⏹️  收到退出信号...")

@@ -179,7 +179,8 @@ def create_tools_schema_from_mcp(mcp_tools: list[dict]) -> ToolsSchema:
 
 async def register_mcp_functions(
     llm_service: OpenAILLMService,
-    mcp_manager
+    mcp_manager,
+    skill_manager=None
 ) -> None:
     """
     将 MCP 工具注册为 LLM 函数处理器
@@ -202,19 +203,21 @@ async def register_mcp_functions(
     Args:
         llm_service: LLM 服务实例（QwenLLMService、OpenAILLMService 等）
         mcp_manager: MCP 管理器实例（MCPManager）
+        skill_manager: 技能管理器实例（可选，用于处理 skill_execute）
 
     使用示例：
     ```python
     # 在主程序中
-    await register_mcp_functions(llm, mcp)
+    await register_mcp_functions(llm, mcp, skill_manager)
     ```
 
     工作流程：
     1. LLM 决定调用工具
     2. 触发 mcp_function_handler
-    3. 调用 mcp_manager.call_tool_async()
-    4. 通过 result_callback 返回结果
-    5. LLM 接收结果并继续对话
+    3. 如果是 skill_execute，委托给 skill_manager
+    4. 否则调用 mcp_manager.call_tool_async()
+    5. 通过 result_callback 返回结果
+    6. LLM 接收结果并继续对话
     """
 
     # 创建通用 MCP 函数处理器
@@ -224,6 +227,8 @@ async def register_mcp_functions(
         统一的 MCP 函数调用处理器
 
         处理所有 MCP 工具的调用，包括：
+        - skill_execute：技能执行
+        - openmeteo_weather：天气查询 API（Open-Meteo，免费无需密钥）
         - Playwright 浏览器操作
         - Windows 系统操作
         - 文件系统操作
@@ -233,6 +238,140 @@ async def register_mcp_functions(
         function_name = params.function_name
         arguments = params.arguments
 
+        # ✅ 特殊处理：skill_execute
+        if function_name == "skill_execute" and skill_manager:
+            skill_name = arguments.get("skill_name")
+            user_input = arguments.get("user_input", "")
+
+            print(f"🔧 调用技能: {skill_name}")
+            print(f"   用户输入: {user_input}")
+
+            try:
+                result = await skill_manager.execute_skill(skill_name, user_input)
+
+                if result.success:
+                    print(f"✓ 技能执行成功")
+                    await params.result_callback(result.content)
+                else:
+                    print(f"✗ 技能执行失败: {result.error}")
+                    await params.result_callback(f"错误: {result.error}")
+
+            except Exception as e:
+                print(f"❌ 技能调用异常: {e}")
+                import traceback
+                traceback.print_exc()
+                await params.result_callback(f"异常: {str(e)}")
+
+            return
+
+        # ✅ 特殊处理：Open-Meteo 天气 API（免费，无需API密钥）
+        if function_name == "openmeteo_weather":
+            city = arguments.get("city", "")
+            print(f"🌤️ 查询天气: {city}")
+
+            try:
+                import aiohttp
+
+                # 第一步：地理编码（城市 → 经纬度）
+                geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1&language=zh&format=json"
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(geo_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                        if response.status != 200:
+                            await params.result_callback(f"无法查询 {city} 的天气，请检查城市名称。")
+                            return
+
+                        geo_data = await response.json()
+
+                        if not geo_data.get("results"):
+                            await params.result_callback(f"未找到城市：{city}")
+                            return
+
+                        # 获取经纬度和城市名
+                        location = geo_data["results"][0]
+                        latitude = location["latitude"]
+                        longitude = location["longitude"]
+                        city_name = location.get("name", city)
+                        country = location.get("country", "")
+
+                        # 第二步：查询实时天气
+                        weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current_weather=true&timezone=auto&hourly=relativehumidity_2m"
+
+                        async with session.get(weather_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                            if response.status != 200:
+                                await params.result_callback(f"无法获取 {city_name} 的天气数据。")
+                                return
+
+                            weather_data = await response.json()
+
+                            # 解析当前天气
+                            current = weather_data.get("current_weather", {})
+                            temp = current.get("temperature", "N/A")
+                            wind_speed = current.get("windspeed", "N/A")
+                            wind_direction = current.get("winddirection", "N/A")
+                            weather_code = current.get("weathercode", 0)
+
+                            # 天气代码映射（Open-Meteo WMO code）
+                            weather_desc_map = {
+                                0: "晴朗", 1: "大部晴朗", 2: "多云", 3: "阴天",
+                                45: "雾", 48: "雾凇",
+                                51: "毛毛雨", 53: "毛毛雨", 55: "毛毛雨",
+                                61: "小雨", 63: "中雨", 65: "大雨",
+                                71: "小雪", 73: "中雪", 75: "大雪",
+                                80: "阵雨", 81: "阵雨", 82: "暴雨",
+                                95: "雷阵雨", 96: "雷阵雨", 99: "雷阵雨"
+                            }
+                            weather_desc = weather_desc_map.get(weather_code, "未知")
+
+                            # 获取湿度（从hourly数据中提取当前小时的）
+                            hourly = weather_data.get("hourly", {})
+                            humidity = "N/A"
+                            if "relativehumidity_2m" in hourly and "time" in hourly:
+                                # 获取当前时间戳（用于匹配最近的小时数据）
+                                import datetime
+                                now = datetime.datetime.now(datetime.timezone.utc)
+                                current_time_str = now.strftime("%Y-%m-%dT%H:00")
+
+                                # 找到最接近当前时间的索引
+                                times = hourly.get("time", [])
+                                humidities = hourly.get("relativehumidity_2m", [])
+
+                                if times and humidities:
+                                    # 简单做法：取第一个（通常是当前或最近的小时）
+                                    humidity = humidities[0] if len(humidities) > 0 else "N/A"
+
+                            # 风向映射
+                            wind_dir_map = {
+                                (0, 23): "北", (23, 68): "东北", (68, 113): "东",
+                                (113, 158): "东南", (158, 203): "南", (203, 248): "西南",
+                                (248, 293): "西", (293, 338): "西北", (338, 361): "北"
+                            }
+                            wind_dir_str = "北"
+                            for (low, high), direction in wind_dir_map.items():
+                                if low <= wind_direction < high:
+                                    wind_dir_str = direction
+                                    break
+
+                            # 格式化输出
+                            result = f"""📍 {city_name} ({country}) 当前天气
+
+🌤️ 天气：{weather_desc}
+🌡️ 温度：{temp}°C
+💧 湿度：{humidity}%
+💨 风速：{wind_speed} km/h，{wind_dir_str}风"""
+
+                            print(f"✓ 天气查询成功")
+                            await params.result_callback(result)
+
+            except Exception as e:
+                print(f"❌ 天气查询失败: {e}")
+                import traceback
+                traceback.print_exc()
+                await params.result_callback(f"天气查询失败: {str(e)}")
+
+            return
+
+        # MCP 工具处理
         print(f"🔧 调用 MCP 工具: {function_name}")
         print(f"   参数: {arguments}")
 
