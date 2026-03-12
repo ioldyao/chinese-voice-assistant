@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "@pipecat-ai/client-js": "^1.5.0",
+    "@pipecat-ai/client-react": "^1.1.0",
+    "@playwright/mcp": "^0.0.54"
+  }
+}
