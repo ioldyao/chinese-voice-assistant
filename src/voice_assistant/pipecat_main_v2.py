@@ -447,16 +447,28 @@ async def main():
                 print("✓ Pipeline 正在运行（等待音频输入或唤醒词）")
 
             # 等待任务完成（应该一直运行直到 Ctrl+C）
-            await runner_task
+            result = await runner_task
+            print(f"⚠️  Pipeline 任务意外结束: {result}")
 
         except asyncio.CancelledError:
             print("\n⏹️  Pipeline 任务已取消")
             raise
         except Exception as e:
             print(f"❌ Pipeline 运行出错: {e}")
+            print(f"❌ 错误类型: {type(e).__name__}")
             import traceback
             traceback.print_exc()
-            raise
+            # 检查 runner_task 的异常
+            if runner_task and runner_task.done():
+                try:
+                    result = runner_task.result()
+                    print(f"📋 RunnerTask 结果: {result}")
+                except Exception as task_error:
+                    print(f"📋 RunnerTask 异常: {task_error}")
+                    import traceback
+                    traceback.print_exception(type(task_error), task_error, task_error.__traceback__)
+            # 不要直接 raise，让程序继续清理
+            return
 
     except KeyboardInterrupt:
         print("\n⏹️  收到退出信号...")
