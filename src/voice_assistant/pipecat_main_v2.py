@@ -133,6 +133,9 @@ async def create_pipecat_pipeline():
 
         if success_count > 0:
             mcp_tools = await mcp.list_all_tools_async()
+            print(f"📋 MCP 总工具数: {len(mcp_tools)}")
+            for tool in mcp_tools:
+                print(f"   - {tool.get('server', 'unknown')}: {tool.get('name', 'unnamed')}")
             playwright_tools = [t for t in mcp_tools if t.get("server") == "playwright"]
             print(f"✓ Playwright MCP 已启动（{len(playwright_tools)} 个工具）")
         else:
