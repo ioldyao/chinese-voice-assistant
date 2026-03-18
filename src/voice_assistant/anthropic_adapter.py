@@ -32,6 +32,23 @@ class AnthropicLLMAdapter(BaseLLMAdapter):
         """LLMSpecificMessage 的标识符"""
         return "anthropic"
 
+    def to_provider_tools_format(self, tools_schema) -> List[Dict[str, Any]]:
+        """
+        转换工具格式：Pipecat 标准格式 → Anthropic 格式
+
+        Anthropic 工具格式：
+        {
+            "name": "tool_name",
+            "description": "Tool description",
+            "input_schema": {...}  # JSON Schema
+        }
+
+        注意：当前版本暂未实现工具调用，返回空列表。
+        """
+        # TODO: 实现完整的工具格式转换
+        # 暂时返回空列表
+        return []
+
     def get_llm_invocation_params(self, context: LLMContext) -> Dict[str, Any]:
         """
         获取 Anthropic API 调用参数
