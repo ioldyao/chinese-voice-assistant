@@ -14,7 +14,7 @@ except ImportError:
     pass
 
 # ==================== LLM 配置 - 从环境变量读取 ====================
-# 指定使用哪个 LLM 服务
+# 指定使用哪个 LLM 服务：qwen | deepseek | openai | anthropic
 LLM_SERVICE = os.getenv("LLM_SERVICE", "qwen")  # 默认使用 qwen
 
 # Qwen (阿里云 DashScope) 配置
@@ -31,6 +31,13 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")  # deepseek-chat, 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_API_URL = os.getenv("OPENAI_API_URL", "https://api.openai.com/v1")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")  # gpt-4o, gpt-4, gpt-3.5-turbo, o1
+
+# Anthropic Claude 配置
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+ANTHROPIC_API_URL = os.getenv("ANTHROPIC_API_URL", "https://api.anthropic.com")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
+ANTHROPIC_ENABLE_THINKING = os.getenv("ANTHROPIC_ENABLE_THINKING", "false").lower() == "true"
+ANTHROPIC_THINKING_EFFORT = os.getenv("ANTHROPIC_THINKING_EFFORT", "medium")  # high, medium, low
 
 # ==================== 向后兼容配置（旧变量名） ====================
 DASHSCOPE_API_KEY = QWEN_API_KEY  # 向后兼容

@@ -52,7 +52,7 @@ from .qwen_llm_service import (
     setup_function_call_event_handlers,  # 新增：官方事件处理器
 )
 
-# 导入官方 Context Aggregator
+# 导入官方 Context Aggregator（OpenAI 需要）
 from pipecat.services.openai.llm import (
     OpenAIUserContextAggregator,
     OpenAIAssistantContextAggregator,
@@ -66,6 +66,8 @@ from .config import (
     QWEN_API_KEY, QWEN_API_URL, QWEN_MODEL,
     DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL,
     OPENAI_API_KEY, OPENAI_API_URL, OPENAI_MODEL,
+    ANTHROPIC_API_KEY, ANTHROPIC_API_URL, ANTHROPIC_MODEL,
+    ANTHROPIC_ENABLE_THINKING, ANTHROPIC_THINKING_EFFORT,
     load_mcp_servers_config,
     get_mcp_server_info,
 )
@@ -133,9 +135,6 @@ async def create_pipecat_pipeline():
 
         if success_count > 0:
             mcp_tools = await mcp.list_all_tools_async()
-            print(f"📋 MCP 总工具数: {len(mcp_tools)}")
-            for tool in mcp_tools:
-                print(f"   - {tool.get('server', 'unknown')}: {tool.get('name', 'unnamed')}")
             playwright_tools = [t for t in mcp_tools if t.get("server") == "playwright"]
             print(f"✓ Playwright MCP 已启动（{len(playwright_tools)} 个工具）")
         else:
@@ -164,13 +163,21 @@ async def create_pipecat_pipeline():
             "base_url": OPENAI_API_URL,
             "model": OPENAI_MODEL,
         },
+        "anthropic": {
+            "service": "anthropic",
+            "api_key": ANTHROPIC_API_KEY,
+            "base_url": ANTHROPIC_API_URL,
+            "model": ANTHROPIC_MODEL,
+            "enable_thinking": ANTHROPIC_ENABLE_THINKING,
+            "thinking_effort": ANTHROPIC_THINKING_EFFORT,
+        },
     }
 
     # 获取当前选择的 LLM 配置
     if LLM_SERVICE.lower() not in llm_config:
         raise ValueError(
             f"不支持的 LLM_SERVICE: {LLM_SERVICE}。"
-            f"支持的服务：qwen, deepseek, openai"
+            f"支持的服务：qwen, deepseek, openai, anthropic"
         )
 
     config = llm_config[LLM_SERVICE.lower()]
@@ -254,11 +261,12 @@ async def create_pipecat_pipeline():
     }
     tools.append(weather_tool)
 
-    # 创建对话上下文
-    messages = [
-        {
-            "role": "system",
-            "content": f"""你是一个智能语音助手，可以使用浏览器工具和视觉理解能力帮助用户。
+    # 创建对话上下文和工具（OpenAI 需要）
+    if LLM_SERVICE.lower() != "anthropic":
+        messages = [
+            {
+                "role": "system",
+                "content": f"""你是一个智能语音助手，可以使用浏览器工具和视觉理解能力帮助用户。
 
 {skills_prompt}
 
@@ -290,14 +298,51 @@ async def create_pipecat_pipeline():
    - 突出关键信息，准确描述画面内容
 
 4. 不要主动询问用户是否需要其他帮助"""
-        }
-    ]
+            }
+        ]
 
-    context = create_llm_context(messages, tools=tools)
+        context = create_llm_context(messages, tools=tools)
 
-    # 创建 Context Aggregators
-    user_aggregator = OpenAIUserContextAggregator(context)
-    assistant_aggregator = OpenAIAssistantContextAggregator(context)
+        # 创建 Context Aggregators
+        user_aggregator = OpenAIUserContextAggregator(context)
+        assistant_aggregator = OpenAIAssistantContextAggregator(context)
+    else:
+        # ✅ Anthropic：设置系统提示词
+        system_prompt = f"""你是一个智能语音助手，可以使用浏览器工具和视觉理解能力帮助用户。
+
+{skills_prompt}
+
+## 可用工具
+
+- Playwright 浏览器操作（导航、点击、输入、滚动等）
+- skill_execute：执行技能（参数：skill_name, user_input）
+
+## 能力
+
+- 视觉理解：可以看到并描述屏幕内容
+
+## 重要规则
+
+1. **技能使用**（用户需要技能帮助时）：
+   - 根据用户需求，判断是否需要使用技能
+   - 如果需要，调用 skill_execute(skill_name="技能名", user_input="用户输入")
+   - 不要重复调用同一个技能
+
+2. **浏览器操作**（用户要求"打开"、"点击"、"输入"等）：
+   - **点击元素前必须先调用 browser_snapshot 获取最新页面快照**
+   - 使用快照中的 ref 编号进行点击操作
+   - 如果点击失败（ref not found），立即重新调用 browser_snapshot 获取新快照
+   - 工具调用成功后，用简短的中文确认（如"好的，已经点击"）
+
+3. **视觉理解**（用户要求"查看"、"看"、"描述"等）：
+   - 如果收到 `[视觉观察]` 开头的消息，说明系统已经完成截图和视觉分析
+   - 用自然、简洁的语言向用户描述屏幕内容
+   - 突出关键信息，准确描述画面内容
+
+4. 不要主动询问用户是否需要其他帮助"""
+        llm.set_system_prompt(system_prompt)
+        user_aggregator = None
+        assistant_aggregator = None
 
     print(f"✓ LLM Service 已就绪（{len(tools)} 个工具）")
 
@@ -364,21 +409,35 @@ async def create_pipecat_pipeline():
 
     print("✓ Transport 已启动")
 
-    # 6. ✅ 构建 Pipeline（官方标准顺序，无 SkillProcessor）
+    # 6. ✅ 构建 Pipeline（根据 LLM 服务选择架构）
     print("⏳ 构建 Pipeline...")
 
-    pipeline = Pipeline([
-        transport.input(),              # 1. ✅ 官方音频输入（内置 VAD 处理）
-        kws_proc,                       # 2. KWS 唤醒词检测
-        asr_proc,                       # 3. ASR 识别（响应 VAD frames）
-        user_aggregator,                # 4. ✅ 添加用户消息到 context（紧跟 ASR）
-        vision_proc,                    # 5. ✅ Vision（直接修改 context）
-        # ❌ skill_proc 已移除 - v3.0 使用独立集成层
-        llm,                            # 6. ✅ LLM 生成（已注册 MCP 函数 + 技能函数）
-        tts_proc,                       # 7. ✅ TTS 合成（在 aggregator 之前，接收 LLMTextFrame）
-        assistant_aggregator,           # 8. ✅ 保存助手响应（收集 LLMTextFrame 到 context）
-        transport.output(),             # 9. ✅ 官方音频输出
-    ])
+    if LLM_SERVICE.lower() == "anthropic":
+        # ✅ Anthropic 架构：不需要 Context Aggregator
+        pipeline = Pipeline([
+            transport.input(),              # 1. 官方音频输入
+            kws_proc,                       # 2. KWS 唤醒词检测
+            asr_proc,                       # 3. ASR 识别
+            vision_proc,                    # 4. Vision
+            llm,                            # 5. Anthropic LLM（直接处理 TranscriptionFrame）
+            tts_proc,                       # 6. TTS 合成
+            transport.output(),             # 7. 官方音频输出
+        ])
+        print("✓ Pipeline 已构建（Anthropic 架构）")
+    else:
+        # ✅ OpenAI 架构：使用 Context Aggregator
+        pipeline = Pipeline([
+            transport.input(),              # 1. 官方音频输入
+            kws_proc,                       # 2. KWS 唤醒词检测
+            asr_proc,                       # 3. ASR 识别
+            user_aggregator,                # 4. 用户消息聚合
+            vision_proc,                    # 5. Vision
+            llm,                            # 6. LLM 生成
+            tts_proc,                       # 7. TTS 合成
+            assistant_aggregator,           # 8. 助手响应聚合
+            transport.output(),             # 9. 官方音频输出
+        ])
+        print("✓ Pipeline 已构建（OpenAI 架构）")
 
     print("✓ Pipeline 已构建")
     print("\n" + "="*60)
@@ -410,7 +469,7 @@ async def main():
         task = PipelineTask(
             pipeline,
             params=PipelineParams(
-                allow_interruptions=True,  # 启用官方中断机制
+                allow_interruptions=False,  # ✅ 禁用自动中断，只通过 KWS 唤醒
                 audio_in_sample_rate=16000,
                 audio_out_sample_rate=16000,
             )
@@ -450,28 +509,16 @@ async def main():
                 print("✓ Pipeline 正在运行（等待音频输入或唤醒词）")
 
             # 等待任务完成（应该一直运行直到 Ctrl+C）
-            result = await runner_task
-            print(f"⚠️  Pipeline 任务意外结束: {result}")
+            await runner_task
 
         except asyncio.CancelledError:
             print("\n⏹️  Pipeline 任务已取消")
             raise
         except Exception as e:
             print(f"❌ Pipeline 运行出错: {e}")
-            print(f"❌ 错误类型: {type(e).__name__}")
             import traceback
             traceback.print_exc()
-            # 检查 runner_task 的异常
-            if runner_task and runner_task.done():
-                try:
-                    result = runner_task.result()
-                    print(f"📋 RunnerTask 结果: {result}")
-                except Exception as task_error:
-                    print(f"📋 RunnerTask 异常: {task_error}")
-                    import traceback
-                    traceback.print_exception(type(task_error), task_error, task_error.__traceback__)
-            # 不要直接 raise，让程序继续清理
-            return
+            raise
 
     except KeyboardInterrupt:
         print("\n⏹️  收到退出信号...")
