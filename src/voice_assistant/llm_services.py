@@ -429,11 +429,10 @@ class LLMFactory:
             base_url = base_url or "https://api.anthropic.com"
             model = model or "claude-sonnet-4-5-20250929"
 
-            # ✅ 使用 OpenAI 兼容模式，以便与 OpenAIUserContextAggregator 配合
-            # Anthropic Messages API 格式，但使用 OpenAI 客户端
-            print(f"⚠️  Anthropic 模式使用 OpenAI 兼容客户端（配合 Context Aggregator）")
+            # ✅ 使用 AnthropicLLMService（纯 Anthropic API + Adapter 模式）
+            from .anthropic_llm_service import AnthropicLLMService
 
-            return QwenLLMService(
+            return AnthropicLLMService(
                 api_key=api_key,
                 base_url=base_url,
                 model=model,

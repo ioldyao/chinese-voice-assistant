@@ -1,24 +1,13 @@
 """
-Anthropic Messages API LLM Service - 纯 Anthropic API 实现
+Anthropic Messages API LLM Service - 纯 Anthropic API 实现（包装器链模式）
 
-使用 Anthropic Messages API 规范，支持任何兼容该规范的服务。
+使用 Pipecat 的 Adapter 模式来处理不同的 LLM API。
 
-特点：
-- ✅ 纯 Anthropic Messages API（完全不依赖 OpenAI）
-- ✅ 直接处理 TranscriptionFrame（不使用 Context Aggregator）
-- ✅ 自己维护 Anthropic 格式的对话历史
-- ✅ 支持官方 Claude API（api.anthropic.com）
-- ✅ 支持智谱 GLM（https://open.bigmodel.cn/api/anthropic）
-- ✅ 流式响应
-- ✅ 自适应思考模式（Adaptive Thinking）
-
-兼容的服务：
-- Anthropic Claude（官方）：https://api.anthropic.com
-- 智谱 GLM：https://open.bigmodel.cn/api/anthropic
-- 本地模型：Ollama、vLLM 等（需兼容 Messages API）
-
-官方文档：
-- https://docs.anthropic.com/en/api/messages
+架构：
+- 继承 LLMService（Pipecat 基类）
+- 使用 AnthropicLLMAdapter 进行格式转换
+- 与 Context Aggregator 配合工作
+- 调用纯 Anthropic Messages API
 """
 import asyncio
 from typing import Optional, AsyncGenerator
@@ -30,43 +19,38 @@ from pipecat.services.llm_service import LLMService
 from pipecat.frames.frames import (
     Frame,
     LLMTextFrame,
-    TranscriptionFrame,
+    LLMContextFrame,
     LLMFullResponseStartFrame,
     LLMFullResponseEndFrame,
-    InterruptionFrame,
-    BotStartedSpeakingFrame,
-    BotStoppedSpeakingFrame,
-    UserStartedSpeakingFrame,
-    UserStoppedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection
+from pipecat.processors.aggregators.llm_context import LLMContext
+
+from .anthropic_adapter import AnthropicLLMAdapter
 
 
 class AnthropicLLMService(LLMService):
     """
-    Anthropic Messages API LLM Service - 纯 Anthropic 实现
+    Anthropic Messages API LLM Service - 包装器链模式
 
-    特点：
-    - ✅ 继承 LLMService 基类（不是 OpenAILLMService）
-    - ✅ 直接处理 TranscriptionFrame
-    - ✅ 维护 Anthropic 格式的对话历史
-    - ✅ 调用纯 Anthropic API（不转换）
+    架构说明：
+    1. 继承 LLMService（Pipecat 基类）
+    2. 使用 AnthropicLLMAdapter 进行格式转换
+    3. 接收 LLMContextFrame（从 Context Aggregator）
+    4. 调用纯 Anthropic Messages API
+    5. 推送 LLMTextFrame 到下游
 
-    架构：
-    1. process_frame() 接收 TranscriptionFrame
-    2. 将用户消息添加到 Anthropic 格式的历史记录
-    3. 调用 _process_context() 使用 Anthropic API
-    4. 推送 LLMTextFrame 到下游
+    Pipeline 位置：
+    transport.input() → KWS → ASR → user_aggregator → Vision → LLM → TTS → assistant_aggregator → output
 
-    使用示例：
-    ```python
-    llm = AnthropicLLMService(
-        api_key="sk-ant-xxxxx",
-        base_url="https://api.anthropic.com",
-        model="claude-sonnet-4-5-20250929"
-    )
-    ```
+    与 OpenAI 的区别：
+    - OpenAI: 继承 BaseOpenAILLMService（使用 AsyncOpenAI 客户端）
+    - Anthropic: 继承 LLMService（使用 AsyncAnthropic 客户端）
+    - 两者都使用 Context Aggregator 架构
     """
+
+    # 设置 Anthropic 适配器
+    adapter_class = AnthropicLLMAdapter
 
     def __init__(
         self,
@@ -103,10 +87,6 @@ class AnthropicLLMService(LLMService):
         self._enable_thinking = enable_thinking
         self._thinking_effort = thinking_effort
 
-        # ✅ Anthropic 格式的对话历史（不使用 OpenAI 格式）
-        self._messages = []
-        self._system_prompt = None
-
         # 创建 Anthropic 客户端
         self.client = AsyncAnthropic(
             api_key=api_key,
@@ -114,72 +94,47 @@ class AnthropicLLMService(LLMService):
             timeout=60.0
         )
 
-        # 追踪 bot 说话状态
-        self._bot_speaking = False
+        # 创建 Anthropic 适配器（用于格式转换）
+        self._adapter = AnthropicLLMAdapter()
 
         print(f"✓ AnthropicLLMService 初始化完成")
         print(f"  - 模型: {model}")
         print(f"  - API: {base_url}")
         print(f"  - 思考模式: {'启用' if enable_thinking else '禁用'}")
 
-    def set_system_prompt(self, prompt: str):
-        """设置系统提示词"""
-        self._system_prompt = prompt
-
     async def process_frame(self, frame: Frame, direction: FrameDirection):
-        """处理帧 - 纯 Anthropic 架构"""
+        """
+        处理帧 - 接收 LLMContextFrame
+
+        这是包装器链的关键：从 Context Aggregator 接收聚合后的上下文。
+        """
         await super().process_frame(frame, direction)
 
-        # 追踪 bot 说话状态
-        if isinstance(frame, BotStartedSpeakingFrame):
-            self._bot_speaking = True
-        elif isinstance(frame, BotStoppedSpeakingFrame):
-            self._bot_speaking = False
+        # 处理 LLMContextFrame（从 Context Aggregator 发送）
+        if isinstance(frame, LLMContextFrame):
+            context = frame.context
+            if isinstance(context, LLMContext):
+                await self._process_context(context)
 
-        # 中断处理
-        if isinstance(frame, InterruptionFrame):
-            # 清空未完成的输入
-            await self.push_frame(frame, direction)
-            return
+        # 其他帧直接传递
+        await self.push_frame(frame, direction)
 
-        # ✅ 直接处理 TranscriptionFrame（不使用 Context Aggregator）
-        if isinstance(frame, TranscriptionFrame):
-            # 添加用户消息到 Anthropic 格式的历史记录
-            self._messages.append({
-                "role": "user",
-                "content": frame.text
-            })
-
-            logger.info(f"AnthropicLLM: 收到用户消息: {frame.text}")
-
-            # 调用 Anthropic API 生成响应
-            await self._process_context()
-
-            await self.push_frame(frame, direction)
-        else:
-            # 其他帧直接传递
-            await self.push_frame(frame, direction)
-
-    async def _process_context(self):
+    async def _process_context(self, context: LLMContext):
         """
-        调用 Anthropic API 生成响应
+        处理 LLM Context - 调用 Anthropic API
 
-        使用纯 Anthropic Messages API，不做任何格式转换。
+        使用 Adapter 将通用格式转换为 Anthropic 格式。
         """
-        if not self._messages:
-            return
-
         try:
-            # 构建请求参数（纯 Anthropic 格式）
+            # 使用 Adapter 转换格式
+            invocation_params = self._adapter.get_llm_invocation_params(context)
+
+            # 构建 Anthropic API 请求参数
             request_params = {
                 "model": self._model_name,
                 "max_tokens": self._max_tokens,
-                "messages": self._messages,
+                **invocation_params,  # 包含 messages, system, tools 等
             }
-
-            # 添加 system（如果有）
-            if self._system_prompt:
-                request_params["system"] = self._system_prompt
 
             # 添加思考模式（如果启用）
             if self._enable_thinking:
@@ -196,12 +151,6 @@ class AnthropicLLMService(LLMService):
                     # 推送每个 token 到下游
                     await self.push_frame(LLMTextFrame(text))
                     assistant_message += text
-
-            # 添加助手响应到历史记录
-            self._messages.append({
-                "role": "assistant",
-                "content": assistant_message
-            })
 
             # 推送结束帧
             await self.push_frame(LLMFullResponseEndFrame())

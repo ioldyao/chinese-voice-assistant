@@ -261,12 +261,11 @@ async def create_pipecat_pipeline():
     }
     tools.append(weather_tool)
 
-    # 创建对话上下文和工具（OpenAI 需要）
-    if LLM_SERVICE.lower() != "anthropic":
-        messages = [
-            {
-                "role": "system",
-                "content": f"""你是一个智能语音助手，可以使用浏览器工具和视觉理解能力帮助用户。
+    # 创建对话上下文（所有服务统一使用）
+    messages = [
+        {
+            "role": "system",
+            "content": f"""你是一个智能语音助手，可以使用浏览器工具和视觉理解能力帮助用户。
 
 {skills_prompt}
 
@@ -298,51 +297,14 @@ async def create_pipecat_pipeline():
    - 突出关键信息，准确描述画面内容
 
 4. 不要主动询问用户是否需要其他帮助"""
-            }
-        ]
+        }
+    ]
 
-        context = create_llm_context(messages, tools=tools)
+    context = create_llm_context(messages, tools=tools)
 
-        # 创建 Context Aggregators
-        user_aggregator = OpenAIUserContextAggregator(context)
-        assistant_aggregator = OpenAIAssistantContextAggregator(context)
-    else:
-        # ✅ Anthropic：设置系统提示词
-        system_prompt = f"""你是一个智能语音助手，可以使用浏览器工具和视觉理解能力帮助用户。
-
-{skills_prompt}
-
-## 可用工具
-
-- Playwright 浏览器操作（导航、点击、输入、滚动等）
-- skill_execute：执行技能（参数：skill_name, user_input）
-
-## 能力
-
-- 视觉理解：可以看到并描述屏幕内容
-
-## 重要规则
-
-1. **技能使用**（用户需要技能帮助时）：
-   - 根据用户需求，判断是否需要使用技能
-   - 如果需要，调用 skill_execute(skill_name="技能名", user_input="用户输入")
-   - 不要重复调用同一个技能
-
-2. **浏览器操作**（用户要求"打开"、"点击"、"输入"等）：
-   - **点击元素前必须先调用 browser_snapshot 获取最新页面快照**
-   - 使用快照中的 ref 编号进行点击操作
-   - 如果点击失败（ref not found），立即重新调用 browser_snapshot 获取新快照
-   - 工具调用成功后，用简短的中文确认（如"好的，已经点击"）
-
-3. **视觉理解**（用户要求"查看"、"看"、"描述"等）：
-   - 如果收到 `[视觉观察]` 开头的消息，说明系统已经完成截图和视觉分析
-   - 用自然、简洁的语言向用户描述屏幕内容
-   - 突出关键信息，准确描述画面内容
-
-4. 不要主动询问用户是否需要其他帮助"""
-        llm.set_system_prompt(system_prompt)
-        user_aggregator = None
-        assistant_aggregator = None
+    # 创建 Context Aggregators（所有服务统一使用）
+    user_aggregator = OpenAIUserContextAggregator(context)
+    assistant_aggregator = OpenAIAssistantContextAggregator(context)
 
     print(f"✓ LLM Service 已就绪（{len(tools)} 个工具）")
 
@@ -409,35 +371,24 @@ async def create_pipecat_pipeline():
 
     print("✓ Transport 已启动")
 
-    # 6. ✅ 构建 Pipeline（根据 LLM 服务选择架构）
+    # 6. ✅ 构建 Pipeline（统一架构 - 包装器链模式）
     print("⏳ 构建 Pipeline...")
 
-    if LLM_SERVICE.lower() == "anthropic":
-        # ✅ Anthropic 架构：不需要 Context Aggregator
-        pipeline = Pipeline([
-            transport.input(),              # 1. 官方音频输入
-            kws_proc,                       # 2. KWS 唤醒词检测
-            asr_proc,                       # 3. ASR 识别
-            vision_proc,                    # 4. Vision
-            llm,                            # 5. Anthropic LLM（直接处理 TranscriptionFrame）
-            tts_proc,                       # 6. TTS 合成
-            transport.output(),             # 7. 官方音频输出
-        ])
-        print("✓ Pipeline 已构建（Anthropic 架构）")
-    else:
-        # ✅ OpenAI 架构：使用 Context Aggregator
-        pipeline = Pipeline([
-            transport.input(),              # 1. 官方音频输入
-            kws_proc,                       # 2. KWS 唤醒词检测
-            asr_proc,                       # 3. ASR 识别
-            user_aggregator,                # 4. 用户消息聚合
-            vision_proc,                    # 5. Vision
-            llm,                            # 6. LLM 生成
-            tts_proc,                       # 7. TTS 合成
-            assistant_aggregator,           # 8. 助手响应聚合
-            transport.output(),             # 9. 官方音频输出
-        ])
-        print("✓ Pipeline 已构建（OpenAI 架构）")
+    # ✅ 所有服务使用统一的 Pipeline 架构
+    # OpenAI/Anthropic 的差异通过各自的 Service/Adapter 处理（包装器链）
+    pipeline = Pipeline([
+        transport.input(),              # 1. ✅ 官方音频输入（内置 VAD 处理）
+        kws_proc,                       # 2. KWS 唤醒词检测
+        asr_proc,                       # 3. ASR 识别（响应 VAD frames）
+        user_aggregator,                # 4. ✅ 用户消息聚合（所有服务通用）
+        vision_proc,                    # 5. ✅ Vision（直接修改 context）
+        llm,                            # 6. ✅ LLM 生成（OpenAI/Anthropic 通过 Adapter 处理）
+        tts_proc,                       # 7. ✅ TTS 合成
+        assistant_aggregator,           # 8. ✅ 助手响应聚合（所有服务通用）
+        transport.output(),             # 9. ✅ 官方音频输出
+    ])
+
+    print("✓ Pipeline 已构建（统一架构 + 适配器模式）")
 
     print("✓ Pipeline 已构建")
     print("\n" + "="*60)
