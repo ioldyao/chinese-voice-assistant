@@ -1,11 +1,11 @@
 """
-LLM Services - 基于官方实现 + 用户优化
+LLM Services - 基于 Pipecat 官方实现
 
-使用 Pipecat 官方推荐的继承模式，保留用户的 Qwen3 优化和工厂模式设计。
+使用 Pipecat 官方推荐的 LLM 服务，保留用户的 Qwen3 优化和工厂模式设计。
 
 架构说明：
 - OpenAI 兼容服务：Qwen、DeepSeek、OpenAI（继承 OpenAILLMService）
-- Anthropic 原生服务：Claude Opus/Sonnet（继承 LLMService）
+- Anthropic 原生服务：使用 Pipecat 官方 AnthropicLLMService
 - 使用工厂模式统一创建 LLM 服务
 - 支持多种服务：qwen, deepseek, openai, anthropic
 
@@ -17,9 +17,6 @@ from typing import Optional
 
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-
-# 导入 Anthropic LLM Service
-from .anthropic_llm_service import AnthropicLLMService
 
 
 # ==================== Qwen LLM Service ====================
@@ -424,20 +421,29 @@ class LLMFactory:
                 **kwargs
             )
 
-        # 4. Anthropic Claude（原生 API）
+        # 4. Anthropic Claude（官方实现）
         elif service_lower == "anthropic":
-            base_url = base_url or "https://api.anthropic.com"
-            model = model or "claude-sonnet-4-5-20250929"
+            from pipecat.services.anthropic.llm import AnthropicLLMService
 
-            # ✅ 使用 AnthropicLLMService（纯 Anthropic API + Adapter 模式）
-            from .anthropic_llm_service import AnthropicLLMService
-
-            return AnthropicLLMService(
-                api_key=api_key,
-                base_url=base_url,
-                model=model,
-                **kwargs
-            )
+            # ✅ 使用 Pipecat 官方的 AnthropicLLMService
+            # 支持自定义 base_url（如智谱 GLM API）
+            if base_url and base_url != "https://api.anthropic.com":
+                # 自定义 API（如智谱 GLM）
+                from anthropic import AsyncAnthropic
+                client = AsyncAnthropic(api_key=api_key, base_url=base_url)
+                return AnthropicLLMService(
+                    api_key=api_key,
+                    model=model or "claude-sonnet-4-5-20250929",
+                    client=client,
+                    **kwargs
+                )
+            else:
+                # 官方 Anthropic API
+                return AnthropicLLMService(
+                    api_key=api_key,
+                    model=model or "claude-sonnet-4-5-20250929",
+                    **kwargs
+                )
 
         else:
             raise ValueError(

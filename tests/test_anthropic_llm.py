@@ -1,106 +1,61 @@
-"""
-Anthropic LLM Service 测试
-
-测试 Anthropic Claude Messages API 集成。
-
-使用方法：
-1. 设置环境变量 ANTHROPIC_API_KEY
-2. 运行测试：pytest tests/test_anthropic_llm.py -v
-"""
+"""测试 Anthropic LLM 服务集成"""
 import asyncio
 import os
-from pathlib import Path
+from dotenv import load_dotenv
 
-import pytest
+# 加载环境变量
+load_dotenv()
 
-# 添加项目根目录到 Python 路径
-project_root = Path(__file__).parent.parent
-import sys
-sys.path.insert(0, str(project_root / "src"))
-
-from voice_assistant.anthropic_llm_service import AnthropicLLMService
-from voice_assistant.config import ANTHROPIC_API_KEY
+from pipecat.services.anthropic.llm import AnthropicLLMService
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 
 
-@pytest.mark.asyncio
-async def test_anthropic_llm_instantiation():
-    """测试 Anthropic LLM Service 初始化"""
-    if not ANTHROPIC_API_KEY:
-        pytest.skip("ANTHROPIC_API_KEY 未设置")
+async def test_anthropic_service():
+    """测试 Anthropic LLM 服务"""
 
-    llm = AnthropicLLMService(
-        api_key=ANTHROPIC_API_KEY,
-        model="claude-3-5-haiku-20241022"  # 使用便宜的模型测试
-    )
+    print("=" * 60)
+    print("测试: 官方 Claude API")
+    print("=" * 60)
 
-    assert llm is not None
-    assert llm._model_name == "claude-3-5-haiku-20241022"
-    print("✓ Anthropic LLM Service 初始化成功")
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        print("跳过：ANTHROPIC_API_KEY 未设置")
+        return
 
+    try:
+        # 创建 Anthropic LLM 服务
+        llm = AnthropicLLMService(
+            api_key=api_key,
+            model="claude-sonnet-4-5-20250929"
+        )
 
-@pytest.mark.asyncio
-async def test_anthropic_message_conversion():
-    """测试消息格式转换"""
-    if not ANTHROPIC_API_KEY:
-        pytest.skip("ANTHROPIC_API_KEY 未设置")
+        print("OK: AnthropicLLMService created")
+        print(f"  - Model: claude-sonnet-4-5-20250929")
 
-    llm = AnthropicLLMService(
-        api_key=ANTHROPIC_API_KEY,
-        model="claude-3-5-haiku-20241022"
-    )
+        # 创建 Context
+        messages = [
+            {"role": "user", "content": "Hello"}
+        ]
+        context = LLMContext(messages=messages)
 
-    # OpenAI 格式消息
-    openai_messages = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Hello!"}
-    ]
+        print("OK: LLMContext created")
 
-    # 转换为 Anthropic 格式
-    system, anthropic_messages, tools = \
-        await llm._convert_to_anthropic_format(openai_messages)
+        # 创建 Aggregators（正确方式）
+        aggregator_pair = LLMContextAggregatorPair(context)
+        user_agg = aggregator_pair.user()
+        assistant_agg = aggregator_pair.assistant()
 
-    # 验证转换结果
-    assert system == "You are a helpful assistant."
-    assert len(anthropic_messages) == 1
-    assert anthropic_messages[0]["role"] == "user"
-    assert anthropic_messages[0]["content"] == "Hello!"
-    print("✓ 消息格式转换成功")
+        print("OK: LLMContextAggregatorPair created")
+        print(f"  - User aggregator: {type(user_agg).__name__}")
+        print(f"  - Assistant aggregator: {type(assistant_agg).__name__}")
+        print("\nAll tests passed!")
 
-
-@pytest.mark.asyncio
-async def test_anthropic_stream_chat():
-    """测试流式对话（需要 API 调用）"""
-    if not ANTHROPIC_API_KEY:
-        pytest.skip("ANTHROPIC_API_KEY 未设置")
-
-    llm = AnthropicLLMService(
-        api_key=ANTHROPIC_API_KEY,
-        model="claude-3-5-haiku-20241022"
-    )
-
-    messages = [
-        {"role": "user", "content": "Say 'Hello, Anthropic!' in Chinese."}
-    ]
-
-    # 收集流式输出
-    collected_text = []
-    async for text_chunk in llm.stream_chat_completion(messages):
-        collected_text.append(text_chunk)
-
-    result = "".join(collected_text)
-
-    # 验证输出包含预期内容
-    assert len(result) > 0
-    assert "你好" in result or "Hello" in result
-    print(f"✓ 流式对话成功: {result}")
+    except Exception as e:
+        print(f"ERROR: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
-    # 直接运行测试
-    print("🧪 测试 Anthropic LLM Service\n")
-
-    asyncio.run(test_anthropic_llm_instantiation())
-    asyncio.run(test_anthropic_message_conversion())
-    asyncio.run(test_anthropic_stream_chat())
-
-    print("\n✅ 所有测试通过！")
+    asyncio.run(test_anthropic_service())

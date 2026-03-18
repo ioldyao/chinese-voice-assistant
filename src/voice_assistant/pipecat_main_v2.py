@@ -52,11 +52,13 @@ from .qwen_llm_service import (
     setup_function_call_event_handlers,  # 新增：官方事件处理器
 )
 
-# 导入官方 Context Aggregator（OpenAI 需要）
-from pipecat.services.openai.llm import (
-    OpenAIUserContextAggregator,
-    OpenAIAssistantContextAggregator,
-)
+# ✅ 导入统一的 LLM Context 和 Aggregator
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+
+# ✅ 导入 ToolsSchema（用于 Function Calling）
+from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
 
 # 导入现有组件
 from .wake_word import SmartWakeWordSystem
@@ -74,6 +76,55 @@ from .config import (
 
 # ✅ 导入 Agent Skills（Claude Code 设计）
 from .skills import SkillManager
+
+
+def openai_tools_to_tools_schema(tools: list) -> ToolsSchema:
+    """
+    将 OpenAI 格式的 tools 列表转换为 Pipecat ToolsSchema
+
+    Args:
+        tools: OpenAI 格式的工具列表
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "tool_name",
+                        "description": "...",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {...},
+                            "required": [...]
+                        }
+                    }
+                }
+            ]
+
+    Returns:
+        ToolsSchema: Pipecat 标准工具格式
+    """
+    standard_tools = []
+
+    for tool in tools:
+        if tool.get("type") == "function":
+            func = tool.get("function", {})
+            name = func.get("name")
+            description = func.get("description", "")
+            parameters = func.get("parameters", {})
+
+            # 提取 properties 和 required
+            properties = parameters.get("properties", {})
+            required = parameters.get("required", [])
+
+            # 创建 FunctionSchema
+            function_schema = FunctionSchema(
+                name=name,
+                description=description,
+                properties=properties,
+                required=required
+            )
+            standard_tools.append(function_schema)
+
+    return ToolsSchema(standard_tools=standard_tools)
 
 
 async def create_pipecat_pipeline():
@@ -300,13 +351,23 @@ async def create_pipecat_pipeline():
         }
     ]
 
-    context = create_llm_context(messages, tools=tools)
+    # ✅ 转换 tools 格式：OpenAI → ToolsSchema
+    # LLMContext 需要 ToolsSchema 对象，不能直接使用 OpenAI 格式的列表
+    tools_schema = openai_tools_to_tools_schema(tools)
 
-    # 创建 Context Aggregators（所有服务统一使用）
-    user_aggregator = OpenAIUserContextAggregator(context)
-    assistant_aggregator = OpenAIAssistantContextAggregator(context)
+    # ✅ 创建统一的 LLM Context（所有 LLM 服务通用）
+    # Pipecat 官方推荐使用 LLMContext + LLMContextAggregatorPair
+    # 这样无论是 OpenAI、Anthropic 还是其他服务，都使用相同的架构
+    context = LLMContext(messages=messages, tools=tools_schema)
 
-    print(f"✓ LLM Service 已就绪（{len(tools)} 个工具）")
+    # ✅ 使用 LLMContextAggregatorPair 创建 aggregators
+    # 这是 Pipecat 官方推荐的方式，支持所有 LLM 服务
+    aggregator_pair = LLMContextAggregatorPair(context)
+    user_aggregator = aggregator_pair.user()
+    assistant_aggregator = aggregator_pair.assistant()
+
+    print(f"✓ LLM Context 已创建（{len(tools)} 个工具）")
+    print(f"  - 使用统一 Context 架构（支持所有 LLM 服务）")
 
     # 3. 创建 Pipecat Processors
     print("⏳ 创建 Processors...")
@@ -371,24 +432,26 @@ async def create_pipecat_pipeline():
 
     print("✓ Transport 已启动")
 
-    # 6. ✅ 构建 Pipeline（统一架构 - 包装器链模式）
+    # 6. ✅ 构建 Pipeline（统一架构 - 但使用各自的 Aggregator）
     print("⏳ 构建 Pipeline...")
 
     # ✅ 所有服务使用统一的 Pipeline 架构
-    # OpenAI/Anthropic 的差异通过各自的 Service/Adapter 处理（包装器链）
+    # 区别在于使用的 Context Aggregator：
+    # - OpenAI: OpenAIUserContextAggregator → OpenAILLMContextFrame
+    # - Anthropic: AnthropicUserContextAggregator → AnthropicLLMContextFrame
     pipeline = Pipeline([
         transport.input(),              # 1. ✅ 官方音频输入（内置 VAD 处理）
         kws_proc,                       # 2. KWS 唤醒词检测
         asr_proc,                       # 3. ASR 识别（响应 VAD frames）
-        user_aggregator,                # 4. ✅ 用户消息聚合（所有服务通用）
+        user_aggregator,                # 4. ✅ 用户消息聚合（OpenAI/Anthropic 各自的）
         vision_proc,                    # 5. ✅ Vision（直接修改 context）
-        llm,                            # 6. ✅ LLM 生成（OpenAI/Anthropic 通过 Adapter 处理）
+        llm,                            # 6. ✅ LLM 生成（处理各自的 ContextFrame）
         tts_proc,                       # 7. ✅ TTS 合成
-        assistant_aggregator,           # 8. ✅ 助手响应聚合（所有服务通用）
+        assistant_aggregator,           # 8. ✅ 助手响应聚合（OpenAI/Anthropic 各自的）
         transport.output(),             # 9. ✅ 官方音频输出
     ])
 
-    print("✓ Pipeline 已构建（统一架构 + 适配器模式）")
+    print("✓ Pipeline 已构建（统一 Pipeline + 各自的 Aggregator）")
 
     print("✓ Pipeline 已构建")
     print("\n" + "="*60)
