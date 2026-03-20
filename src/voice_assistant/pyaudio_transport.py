@@ -243,7 +243,7 @@ class PyAudioTransport(BaseTransport):
         }
 
         # 如果配置了输出设备索引，添加参数
-        if audio_output_device is not None:
+        if audio_output_device is not None and audio_output_device.strip():
             output_params['output_device_index'] = int(audio_output_device)
             print(f"✓ 使用指定的输出设备: #{audio_output_device}")
 
