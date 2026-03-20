@@ -161,11 +161,14 @@ class SherpaASRProcessor(FrameProcessor):
 
                     if text:
                         print(f"✓ 识别结果: {text}")
+                        print(f"📤 ASR 推送 TranscriptionFrame: {text}")
                         # ✅ 使用 TranscriptionFrame（LLMUserContextAggregator 期望的类型）
                         await self.push_frame(
                             TranscriptionFrame(text=text, user_id="user", timestamp=self._get_timestamp()),
                             direction
                         )
+                    else:
+                        print(f"⚠️ 识别结果为空")
 
                 # 重置状态（等待下次唤醒）
                 self.recording = False

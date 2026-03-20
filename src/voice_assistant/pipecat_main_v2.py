@@ -22,7 +22,7 @@ logger.add(
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask, PipelineParams
-from pipecat.frames.frames import StartFrame, CancelFrame
+from pipecat.frames.frames import StartFrame, CancelFrame, EndFrame, TTSSpeakFrame
 
 # ✅ 导入 VAD 相关模块（Pipecat 官方）
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -40,6 +40,9 @@ from .pipecat_adapters import (
     VisionProcessor,
 )
 
+# ✅ 导入音频预处理器（降噪）
+from .audio_processors import create_noise_reduction_processor
+
 # 导入 LLM 服务（使用工厂模式）
 from .llm_services import (
     create_llm_service,
@@ -52,11 +55,13 @@ from .qwen_llm_service import (
     setup_function_call_event_handlers,  # 新增：官方事件处理器
 )
 
-# 导入官方 Context Aggregator
-from pipecat.services.openai.llm import (
-    OpenAIUserContextAggregator,
-    OpenAIAssistantContextAggregator,
-)
+# ✅ 导入统一的 LLM Context 和 Aggregator
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+
+# ✅ 导入 ToolsSchema（用于 Function Calling）
+from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
 
 # 导入现有组件
 from .wake_word import SmartWakeWordSystem
@@ -66,12 +71,63 @@ from .config import (
     QWEN_API_KEY, QWEN_API_URL, QWEN_MODEL,
     DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL,
     OPENAI_API_KEY, OPENAI_API_URL, OPENAI_MODEL,
+    ANTHROPIC_API_KEY, ANTHROPIC_API_URL, ANTHROPIC_MODEL,
+    ANTHROPIC_ENABLE_THINKING, ANTHROPIC_THINKING_EFFORT,
     load_mcp_servers_config,
     get_mcp_server_info,
 )
 
 # ✅ 导入 Agent Skills（Claude Code 设计）
 from .skills import SkillManager
+
+
+def openai_tools_to_tools_schema(tools: list) -> ToolsSchema:
+    """
+    将 OpenAI 格式的 tools 列表转换为 Pipecat ToolsSchema
+
+    Args:
+        tools: OpenAI 格式的工具列表
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "tool_name",
+                        "description": "...",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {...},
+                            "required": [...]
+                        }
+                    }
+                }
+            ]
+
+    Returns:
+        ToolsSchema: Pipecat 标准工具格式
+    """
+    standard_tools = []
+
+    for tool in tools:
+        if tool.get("type") == "function":
+            func = tool.get("function", {})
+            name = func.get("name")
+            description = func.get("description", "")
+            parameters = func.get("parameters", {})
+
+            # 提取 properties 和 required
+            properties = parameters.get("properties", {})
+            required = parameters.get("required", [])
+
+            # 创建 FunctionSchema
+            function_schema = FunctionSchema(
+                name=name,
+                description=description,
+                properties=properties,
+                required=required
+            )
+            standard_tools.append(function_schema)
+
+    return ToolsSchema(standard_tools=standard_tools)
 
 
 async def create_pipecat_pipeline():
@@ -98,6 +154,10 @@ async def create_pipecat_pipeline():
 
     # 1. 初始化现有组件
     print("\n⏳ 加载模型...")
+
+    # ✅ 检查并配置音频设备（如果未设置）
+    from .audio_device_setup import check_and_setup_audio_device
+    check_and_setup_audio_device()
 
     # 创建 wake_word 系统（跳过 MCP 初始化）
     wake_system = SmartWakeWordSystem(enable_voice=False, enable_mcp=False)
@@ -133,9 +193,6 @@ async def create_pipecat_pipeline():
 
         if success_count > 0:
             mcp_tools = await mcp.list_all_tools_async()
-            print(f"📋 MCP 总工具数: {len(mcp_tools)}")
-            for tool in mcp_tools:
-                print(f"   - {tool.get('server', 'unknown')}: {tool.get('name', 'unnamed')}")
             playwright_tools = [t for t in mcp_tools if t.get("server") == "playwright"]
             print(f"✓ Playwright MCP 已启动（{len(playwright_tools)} 个工具）")
         else:
@@ -164,13 +221,21 @@ async def create_pipecat_pipeline():
             "base_url": OPENAI_API_URL,
             "model": OPENAI_MODEL,
         },
+        "anthropic": {
+            "service": "anthropic",
+            "api_key": ANTHROPIC_API_KEY,
+            "base_url": ANTHROPIC_API_URL,
+            "model": ANTHROPIC_MODEL,
+            "enable_thinking": ANTHROPIC_ENABLE_THINKING,
+            "thinking_effort": ANTHROPIC_THINKING_EFFORT,
+        },
     }
 
     # 获取当前选择的 LLM 配置
     if LLM_SERVICE.lower() not in llm_config:
         raise ValueError(
             f"不支持的 LLM_SERVICE: {LLM_SERVICE}。"
-            f"支持的服务：qwen, deepseek, openai"
+            f"支持的服务：qwen, deepseek, openai, anthropic"
         )
 
     config = llm_config[LLM_SERVICE.lower()]
@@ -254,7 +319,7 @@ async def create_pipecat_pipeline():
     }
     tools.append(weather_tool)
 
-    # 创建对话上下文
+    # 创建对话上下文（所有服务统一使用）
     messages = [
         {
             "role": "system",
@@ -293,16 +358,35 @@ async def create_pipecat_pipeline():
         }
     ]
 
-    context = create_llm_context(messages, tools=tools)
+    # ✅ 转换 tools 格式：OpenAI → ToolsSchema
+    # LLMContext 需要 ToolsSchema 对象，不能直接使用 OpenAI 格式的列表
+    tools_schema = openai_tools_to_tools_schema(tools)
 
-    # 创建 Context Aggregators
-    user_aggregator = OpenAIUserContextAggregator(context)
-    assistant_aggregator = OpenAIAssistantContextAggregator(context)
+    # ✅ 创建统一的 LLM Context（所有 LLM 服务通用）
+    # Pipecat 官方推荐使用 LLMContext + LLMContextAggregatorPair
+    # 这样无论是 OpenAI、Anthropic 还是其他服务，都使用相同的架构
+    context = LLMContext(messages=messages, tools=tools_schema)
 
-    print(f"✓ LLM Service 已就绪（{len(tools)} 个工具）")
+    # ✅ 使用 LLMContextAggregatorPair 创建 aggregators
+    # 这是 Pipecat 官方推荐的方式，支持所有 LLM 服务
+    aggregator_pair = LLMContextAggregatorPair(context)
+    user_aggregator = aggregator_pair.user()
+    assistant_aggregator = aggregator_pair.assistant()
+
+    print(f"✓ LLM Context 已创建（{len(tools)} 个工具）")
+    print(f"  - 使用统一 Context 架构（支持所有 LLM 服务）")
 
     # 3. 创建 Pipecat Processors
     print("⏳ 创建 Processors...")
+
+    # ✅ 降噪处理器（使用 RNNoise + soxr）
+    # 可选: "rnnoise", "noise_gate", "pass_through"
+    # 暂时使用 pass_through 调试 VAD 问题
+    noise_reduction_proc = create_noise_reduction_processor(
+        method="pass_through",  # 暂时直通，排除 RNNoise 影响
+        enable_debug=False  # 设为 True 查看详细日志
+    )
+    print("✓ 降噪处理器已创建（当前模式: pass_through，用于调试 VAD）")
 
     kws_proc = SherpaKWSProcessor(wake_system.kws_model)
     asr_proc = SherpaASRProcessor(wake_system.asr_model)
@@ -325,12 +409,13 @@ async def create_pipecat_pipeline():
 
     # ✅ 使用 Pipecat 官方 Silero VAD + Smart Turn Detection
     # 根据官方文档：配合 Turn Detection 时使用 stop_secs=0.2
+    # 降低检测阈值，提高灵敏度（解决 VAD 延迟问题）
     vad_analyzer = SileroVADAnalyzer(
         params=VADParams(
-            confidence=0.7,      # VAD 置信度阈值
-            start_secs=0.2,      # 确认开始说话的时间（快速响应）
+            confidence=0.5,      # VAD 置信度阈值（降低以提高灵敏度）
+            start_secs=0.1,      # 确认开始说话的时间（更快速响应）
             stop_secs=0.2,       # 快速检测停顿（Turn Detection 会判断是否完成）
-            min_volume=0.6,      # 最小音量阈值
+            min_volume=0.01,     # 最小音量阈值（降低以检测轻声说话）
         )
     )
 
@@ -364,21 +449,27 @@ async def create_pipecat_pipeline():
 
     print("✓ Transport 已启动")
 
-    # 6. ✅ 构建 Pipeline（官方标准顺序，无 SkillProcessor）
+    # 6. ✅ 构建 Pipeline（统一架构 - 但使用各自的 Aggregator）
     print("⏳ 构建 Pipeline...")
 
+    # ✅ 所有服务使用统一的 Pipeline 架构
+    # 区别在于使用的 Context Aggregator：
+    # - OpenAI: OpenAIUserContextAggregator → OpenAILLMContextFrame
+    # - Anthropic: AnthropicUserContextAggregator → AnthropicLLMContextFrame
     pipeline = Pipeline([
         transport.input(),              # 1. ✅ 官方音频输入（内置 VAD 处理）
-        kws_proc,                       # 2. KWS 唤醒词检测
-        asr_proc,                       # 3. ASR 识别（响应 VAD frames）
-        user_aggregator,                # 4. ✅ 添加用户消息到 context（紧跟 ASR）
-        vision_proc,                    # 5. ✅ Vision（直接修改 context）
-        # ❌ skill_proc 已移除 - v3.0 使用独立集成层
-        llm,                            # 6. ✅ LLM 生成（已注册 MCP 函数 + 技能函数）
-        tts_proc,                       # 7. ✅ TTS 合成（在 aggregator 之前，接收 LLMTextFrame）
-        assistant_aggregator,           # 8. ✅ 保存助手响应（收集 LLMTextFrame 到 context）
-        transport.output(),             # 9. ✅ 官方音频输出
+        kws_proc,                       # 2. KWS 唤醒词检测（使用原始音频，VAD 准确）
+        noise_reduction_proc,           # 3. ✅ RNNoise 降噪（soxr 高质量重采样，仅影响 ASR）
+        asr_proc,                       # 4. ASR 识别（响应 VAD frames，使用降噪后的音频）
+        user_aggregator,                # 5. ✅ 用户消息聚合（OpenAI/Anthropic 各自的）
+        vision_proc,                    # 6. ✅ Vision（直接修改 context）
+        llm,                            # 7. ✅ LLM 生成（处理各自的 ContextFrame）
+        tts_proc,                       # 8. ✅ TTS 合成
+        assistant_aggregator,           # 9. ✅ 助手响应聚合（OpenAI/Anthropic 各自的）
+        transport.output(),             # 10. ✅ 官方音频输出
     ])
+
+    print("✓ Pipeline 已构建（统一 Pipeline + 各自的 Aggregator）")
 
     print("✓ Pipeline 已构建")
     print("\n" + "="*60)
@@ -406,15 +497,43 @@ async def main():
         # 创建 Pipeline
         pipeline, transport, wake_system, mcp, skill_manager, vision_proc = await create_pipecat_pipeline()
 
-        # 创建 PipelineTask
+        # 创建 PipelineTask（添加 Idle Detection）
         task = PipelineTask(
             pipeline,
             params=PipelineParams(
-                allow_interruptions=True,  # 启用官方中断机制
+                allow_interruptions=False,  # ✅ 禁用自动中断，只通过 KWS 唤醒
                 audio_in_sample_rate=16000,
                 audio_out_sample_rate=16000,
-            )
+                enable_heartbeats=True,  # ✅ 启用心跳监控（调试用）
+                enable_metrics=True,  # ✅ 启用性能指标
+            ),
+            idle_timeout_secs=180,  # ✅ 3分钟无活动认为空闲
+            cancel_on_idle_timeout=False,  # ✅ 不自动取消，自定义处理
         )
+
+        # ✅ 注册事件处理器
+        @task.event_handler("on_pipeline_started")
+        async def on_pipeline_started(task, frame):
+            logger.info("🎙️ Pipeline 启动成功")
+
+        @task.event_handler("on_pipeline_error")
+        async def on_pipeline_error(task, frame):
+            logger.error(f"❌ Pipeline 错误: {frame.error}")
+
+        @task.event_handler("on_pipeline_finished")
+        async def on_pipeline_finished(task, frame):
+            if isinstance(frame, EndFrame):
+                logger.info("✅ Pipeline 正常结束")
+            elif isinstance(frame, CancelFrame):
+                logger.info("⏹️ Pipeline 已取消")
+
+        @task.event_handler("on_idle_timeout")
+        async def on_idle_timeout(task):
+            logger.info("⏰ 用户长时间未说话（3分钟），准备结束对话")
+            # 播放告别语音
+            await task.queue_frame(TTSSpeakFrame("长时间未检测到语音，再见！"))
+            # 结束对话
+            await task.queue_frame(EndFrame())
 
         # 发送 StartFrame 初始化
         await task.queue_frames([StartFrame()])
@@ -450,28 +569,16 @@ async def main():
                 print("✓ Pipeline 正在运行（等待音频输入或唤醒词）")
 
             # 等待任务完成（应该一直运行直到 Ctrl+C）
-            result = await runner_task
-            print(f"⚠️  Pipeline 任务意外结束: {result}")
+            await runner_task
 
         except asyncio.CancelledError:
             print("\n⏹️  Pipeline 任务已取消")
             raise
         except Exception as e:
             print(f"❌ Pipeline 运行出错: {e}")
-            print(f"❌ 错误类型: {type(e).__name__}")
             import traceback
             traceback.print_exc()
-            # 检查 runner_task 的异常
-            if runner_task and runner_task.done():
-                try:
-                    result = runner_task.result()
-                    print(f"📋 RunnerTask 结果: {result}")
-                except Exception as task_error:
-                    print(f"📋 RunnerTask 异常: {task_error}")
-                    import traceback
-                    traceback.print_exception(type(task_error), task_error, task_error.__traceback__)
-            # 不要直接 raise，让程序继续清理
-            return
+            raise
 
     except KeyboardInterrupt:
         print("\n⏹️  收到退出信号...")

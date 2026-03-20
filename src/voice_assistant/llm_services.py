@@ -1,14 +1,13 @@
 """
-LLM Services - 基于官方实现 + 用户优化
+LLM Services - 基于 Pipecat 官方实现
 
-使用 Pipecat 官方推荐的继承模式，保留用户的 Qwen3 优化和工厂模式设计。
+使用 Pipecat 官方推荐的 LLM 服务，保留用户的 Qwen3 优化和工厂模式设计。
 
 架构说明：
-- 所有服务继承自官方 OpenAILLMService
-- 保留用户的 Qwen3 特殊优化（禁用思考模式）
-- 保留用户的 Bug 修复（tool_calls content 字段）
+- OpenAI 兼容服务：Qwen、DeepSeek、OpenAI（继承 OpenAILLMService）
+- Anthropic 原生服务：使用 Pipecat 官方 AnthropicLLMService
 - 使用工厂模式统一创建 LLM 服务
-- 支持 Qwen、DeepSeek、OpenAI 等多种服务
+- 支持多种服务：qwen, deepseek, openai, anthropic
 
 官方文档：
 - https://docs.pipecat.ai/guides/learn/llm
@@ -422,10 +421,34 @@ class LLMFactory:
                 **kwargs
             )
 
+        # 4. Anthropic Claude（官方实现）
+        elif service_lower == "anthropic":
+            from pipecat.services.anthropic.llm import AnthropicLLMService
+
+            # ✅ 使用 Pipecat 官方的 AnthropicLLMService
+            # 支持自定义 base_url（如智谱 GLM API）
+            if base_url and base_url != "https://api.anthropic.com":
+                # 自定义 API（如智谱 GLM）
+                from anthropic import AsyncAnthropic
+                client = AsyncAnthropic(api_key=api_key, base_url=base_url)
+                return AnthropicLLMService(
+                    api_key=api_key,
+                    model=model or "claude-sonnet-4-5-20250929",
+                    client=client,
+                    **kwargs
+                )
+            else:
+                # 官方 Anthropic API
+                return AnthropicLLMService(
+                    api_key=api_key,
+                    model=model or "claude-sonnet-4-5-20250929",
+                    **kwargs
+                )
+
         else:
             raise ValueError(
                 f"不支持的 LLM 服务: {service}。"
-                f"支持的服务：qwen, deepseek, openai"
+                f"支持的服务：qwen, deepseek, openai, anthropic"
             )
 
     @staticmethod
