@@ -14,7 +14,7 @@
 
 重构亮点：
   ✨ 基于 Pipecat 官方实现
-  ✨ 使用官方 STTService + WakeCheckFilter
+  ✨ 使用自定义 KWS + Silero VAD + Smart Turn Detection
   ✨ 保留 Qwen3 优化和 Bug 修复
   ✨ 使用官方 Function Calling API
   ✨ 完整文档和类型注解
@@ -30,7 +30,7 @@ import asyncio
 def main():
     """主函数"""
     print("🚀 启动中文智能语音助手 v2.8.0 - 官方架构版")
-    print("✨ 使用 WakeCheckFilter + Agent Skills\n")
+    print("✨ 使用自定义 KWS + Silero VAD + Smart Turn Detection + Agent Skills\n")
     from src.voice_assistant import pipecat_main_v2
     asyncio.run(pipecat_main_v2.main())
 
