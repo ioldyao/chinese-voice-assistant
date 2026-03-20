@@ -405,12 +405,13 @@ async def create_pipecat_pipeline():
 
     # ✅ 使用 Pipecat 官方 Silero VAD + Smart Turn Detection
     # 根据官方文档：配合 Turn Detection 时使用 stop_secs=0.2
+    # 降低检测阈值，提高灵敏度（解决 VAD 延迟问题）
     vad_analyzer = SileroVADAnalyzer(
         params=VADParams(
-            confidence=0.7,      # VAD 置信度阈值
-            start_secs=0.2,      # 确认开始说话的时间（快速响应）
+            confidence=0.5,      # VAD 置信度阈值（降低以提高灵敏度）
+            start_secs=0.1,      # 确认开始说话的时间（更快速响应）
             stop_secs=0.2,       # 快速检测停顿（Turn Detection 会判断是否完成）
-            min_volume=0.6,      # 最小音量阈值
+            min_volume=0.01,     # 最小音量阈值（降低以检测轻声说话）
         )
     )
 
