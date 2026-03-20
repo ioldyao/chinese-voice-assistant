@@ -22,7 +22,7 @@ logger.add(
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask, PipelineParams
-from pipecat.frames.frames import StartFrame, CancelFrame
+from pipecat.frames.frames import StartFrame, CancelFrame, EndFrame, TTSSpeakFrame
 
 # ✅ 导入 VAD 相关模块（Pipecat 官方）
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -497,15 +497,43 @@ async def main():
         # 创建 Pipeline
         pipeline, transport, wake_system, mcp, skill_manager, vision_proc = await create_pipecat_pipeline()
 
-        # 创建 PipelineTask
+        # 创建 PipelineTask（添加 Idle Detection）
         task = PipelineTask(
             pipeline,
             params=PipelineParams(
                 allow_interruptions=False,  # ✅ 禁用自动中断，只通过 KWS 唤醒
                 audio_in_sample_rate=16000,
                 audio_out_sample_rate=16000,
-            )
+                enable_heartbeats=True,  # ✅ 启用心跳监控（调试用）
+                enable_metrics=True,  # ✅ 启用性能指标
+            ),
+            idle_timeout_secs=180,  # ✅ 3分钟无活动认为空闲
+            cancel_on_idle_timeout=False,  # ✅ 不自动取消，自定义处理
         )
+
+        # ✅ 注册事件处理器
+        @task.event_handler("on_pipeline_started")
+        async def on_pipeline_started(task, frame):
+            logger.info("🎙️ Pipeline 启动成功")
+
+        @task.event_handler("on_pipeline_error")
+        async def on_pipeline_error(task, frame):
+            logger.error(f"❌ Pipeline 错误: {frame.error}")
+
+        @task.event_handler("on_pipeline_finished")
+        async def on_pipeline_finished(task, frame):
+            if isinstance(frame, EndFrame):
+                logger.info("✅ Pipeline 正常结束")
+            elif isinstance(frame, CancelFrame):
+                logger.info("⏹️ Pipeline 已取消")
+
+        @task.event_handler("on_idle_timeout")
+        async def on_idle_timeout(task):
+            logger.info("⏰ 用户长时间未说话（3分钟），准备结束对话")
+            # 播放告别语音
+            await task.queue_frame(TTSSpeakFrame("长时间未检测到语音，再见！"))
+            # 结束对话
+            await task.queue_frame(EndFrame())
 
         # 发送 StartFrame 初始化
         await task.queue_frames([StartFrame()])
