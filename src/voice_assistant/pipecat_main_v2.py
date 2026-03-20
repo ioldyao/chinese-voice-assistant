@@ -377,11 +377,12 @@ async def create_pipecat_pipeline():
 
     # ✅ 降噪处理器（使用 RNNoise + soxr）
     # 可选: "rnnoise", "noise_gate", "pass_through"
+    # 暂时使用 pass_through 调试 VAD 问题
     noise_reduction_proc = create_noise_reduction_processor(
-        method="rnnoise",  # 使用 RNNoise 降噪（已修复长度匹配问题）
+        method="pass_through",  # 暂时直通，排除 RNNoise 影响
         enable_debug=False  # 设为 True 查看详细日志
     )
-    print("✓ RNNoise 降噪处理器已创建（soxr 高质量重采样 + 长度对齐）")
+    print("✓ 降噪处理器已创建（当前模式: pass_through，用于调试 VAD）")
 
     kws_proc = SherpaKWSProcessor(wake_system.kws_model)
     asr_proc = SherpaASRProcessor(wake_system.asr_model)
