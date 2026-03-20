@@ -452,9 +452,9 @@ async def create_pipecat_pipeline():
     # - Anthropic: AnthropicUserContextAggregator → AnthropicLLMContextFrame
     pipeline = Pipeline([
         transport.input(),              # 1. ✅ 官方音频输入（内置 VAD 处理）
-        noise_reduction_proc,           # 2. ✅ RNNoise 降噪（soxr 高质量重采样）
-        kws_proc,                       # 3. KWS 唤醒词检测
-        asr_proc,                       # 4. ASR 识别（响应 VAD frames）
+        kws_proc,                       # 2. KWS 唤醒词检测（使用原始音频，VAD 准确）
+        noise_reduction_proc,           # 3. ✅ RNNoise 降噪（soxr 高质量重采样，仅影响 ASR）
+        asr_proc,                       # 4. ASR 识别（响应 VAD frames，使用降噪后的音频）
         user_aggregator,                # 5. ✅ 用户消息聚合（OpenAI/Anthropic 各自的）
         vision_proc,                    # 6. ✅ Vision（直接修改 context）
         llm,                            # 7. ✅ LLM 生成（处理各自的 ContextFrame）
