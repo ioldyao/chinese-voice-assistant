@@ -152,18 +152,25 @@ def update_env_file(device_index: int):
     # 检查是否已存在配置
     lines = env_content.split('\n')
     updated_lines = []
-    input_device_found = False
+    config_updated = False
 
     for line in lines:
+        # 替换或删除现有配置
         if line.startswith('AUDIO_INPUT_DEVICE_INDEX='):
             updated_lines.append(f'AUDIO_INPUT_DEVICE_INDEX={device_index}')
-            input_device_found = True
+            config_updated = True
+        elif line.startswith('AUDIO_OUTPUT_DEVICE_INDEX='):
+            # 保留输出设备配置
+            updated_lines.append(line)
         else:
             updated_lines.append(line)
 
-    # 如果没有找到，添加到文件末尾
-    if not input_device_found:
-        updated_lines.append(f'\n# 音频设备配置（自动生成）')
+    # 如果没有找到配置，添加到文件末尾
+    if not config_updated:
+        # 确保文件末尾有换行
+        if updated_lines and updated_lines[-1].strip():
+            updated_lines.append('')
+        updated_lines.append('# 音频设备配置（自动生成）')
         updated_lines.append(f'AUDIO_INPUT_DEVICE_INDEX={device_index}')
 
     # 写回文件
@@ -183,9 +190,13 @@ def check_and_setup_audio_device():
     """
     from .config import AUDIO_INPUT_DEVICE_INDEX
 
-    # 检查是否已配置
-    if AUDIO_INPUT_DEVICE_INDEX is not None:
-        return int(AUDIO_INPUT_DEVICE_INDEX)
+    # 检查是否已配置（排除空字符串）
+    if AUDIO_INPUT_DEVICE_INDEX is not None and AUDIO_INPUT_DEVICE_INDEX.strip():
+        try:
+            return int(AUDIO_INPUT_DEVICE_INDEX)
+        except ValueError:
+            print(f"\n⚠️  配置的设备索引无效: '{AUDIO_INPUT_DEVICE_INDEX}'")
+            print("将重新配置...\n")
 
     # 未配置，启动交互式设置
     print("\n" + "=" * 80)
