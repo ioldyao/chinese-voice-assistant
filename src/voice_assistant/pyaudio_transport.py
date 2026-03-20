@@ -207,14 +207,42 @@ class PyAudioTransport(BaseTransport):
 
     async def start(self):
         """启动音频流"""
-        # 打开输入流
-        self.input_stream = self.p.open(
-            format=pyaudio.paInt16,
-            channels=self.channels,
-            rate=self.sample_rate,
-            input=True,
-            frames_per_buffer=self.chunk_size,
-        )
+        # ✅ 导入配置
+        from .config import AUDIO_INPUT_DEVICE_INDEX, AUDIO_OUTPUT_DEVICE_INDEX
+
+        # 打开输入流（支持指定设备）
+        input_params = {
+            'format': pyaudio.paInt16,
+            'channels': self.channels,
+            'rate': self.sample_rate,
+            'input': True,
+            'frames_per_buffer': self.chunk_size,
+        }
+
+        # 如果配置了输入设备索引，添加参数
+        if AUDIO_INPUT_DEVICE_INDEX is not None:
+            input_params['input_device_index'] = int(AUDIO_INPUT_DEVICE_INDEX)
+            print(f"✓ 使用指定的输入设备: #{AUDIO_INPUT_DEVICE_INDEX}")
+        else:
+            print("⚠️  使用系统默认输入设备（建议通过 list_audio_devices.py 查看并指定设备）")
+
+        self.input_stream = self.p.open(**input_params)
+
+        # 打开输出流（支持指定设备）
+        output_params = {
+            'format': pyaudio.paInt16,
+            'channels': self.channels,
+            'rate': self.sample_rate,
+            'output': True,
+            'frames_per_buffer': self.chunk_size,
+        }
+
+        # 如果配置了输出设备索引，添加参数
+        if AUDIO_OUTPUT_DEVICE_INDEX is not None:
+            output_params['output_device_index'] = int(AUDIO_OUTPUT_DEVICE_INDEX)
+            print(f"✓ 使用指定的输出设备: #{AUDIO_OUTPUT_DEVICE_INDEX}")
+
+        self.output_stream = self.p.open(**output_params)
 
         # 打开输出流
         self.output_stream = self.p.open(

@@ -69,6 +69,12 @@ TTS_AUDIO_DIR = DATA_DIR / "tts_audio"
 SAMPLE_RATE = 16000
 CHUNK_SIZE = 512
 
+# 音频设备配置（可选）
+# 通过 list_audio_devices.py 查看设备列表
+# 留空表示使用系统默认设备
+AUDIO_INPUT_DEVICE_INDEX = os.getenv("AUDIO_INPUT_DEVICE_INDEX", None)
+AUDIO_OUTPUT_DEVICE_INDEX = os.getenv("AUDIO_OUTPUT_DEVICE_INDEX", None)
+
 # TTS配置
 TTS_SHORT_TEXT_LIMIT = 280  # 短文本TTS字符限制
 TTS_CACHE_TIMEOUT_SHORT = 10  # 短文本缓存清理时间（秒）
