@@ -155,6 +155,10 @@ async def create_pipecat_pipeline():
     # 1. 初始化现有组件
     print("\n⏳ 加载模型...")
 
+    # ✅ 检查并配置音频设备（如果未设置）
+    from .audio_device_setup import check_and_setup_audio_device
+    check_and_setup_audio_device()
+
     # 创建 wake_word 系统（跳过 MCP 初始化）
     wake_system = SmartWakeWordSystem(enable_voice=False, enable_mcp=False)
     print("✓ KWS/ASR 模型已加载")
