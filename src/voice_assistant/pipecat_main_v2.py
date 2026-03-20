@@ -40,6 +40,9 @@ from .pipecat_adapters import (
     VisionProcessor,
 )
 
+# ✅ 导入音频预处理器（降噪）
+from .audio_processors import create_noise_reduction_processor
+
 # 导入 LLM 服务（使用工厂模式）
 from .llm_services import (
     create_llm_service,
@@ -372,6 +375,14 @@ async def create_pipecat_pipeline():
     # 3. 创建 Pipecat Processors
     print("⏳ 创建 Processors...")
 
+    # ✅ 降噪处理器（使用 RNNoise + soxr）
+    # 可选: "rnnoise", "noise_gate", "pass_through"
+    noise_reduction_proc = create_noise_reduction_processor(
+        method="rnnoise",  # 使用 RNNoise 降噪（已修复长度匹配问题）
+        enable_debug=False  # 设为 True 查看详细日志
+    )
+    print("✓ RNNoise 降噪处理器已创建（soxr 高质量重采样 + 长度对齐）")
+
     kws_proc = SherpaKWSProcessor(wake_system.kws_model)
     asr_proc = SherpaASRProcessor(wake_system.asr_model)
 
@@ -441,14 +452,15 @@ async def create_pipecat_pipeline():
     # - Anthropic: AnthropicUserContextAggregator → AnthropicLLMContextFrame
     pipeline = Pipeline([
         transport.input(),              # 1. ✅ 官方音频输入（内置 VAD 处理）
-        kws_proc,                       # 2. KWS 唤醒词检测
-        asr_proc,                       # 3. ASR 识别（响应 VAD frames）
-        user_aggregator,                # 4. ✅ 用户消息聚合（OpenAI/Anthropic 各自的）
-        vision_proc,                    # 5. ✅ Vision（直接修改 context）
-        llm,                            # 6. ✅ LLM 生成（处理各自的 ContextFrame）
-        tts_proc,                       # 7. ✅ TTS 合成
-        assistant_aggregator,           # 8. ✅ 助手响应聚合（OpenAI/Anthropic 各自的）
-        transport.output(),             # 9. ✅ 官方音频输出
+        noise_reduction_proc,           # 2. ✅ RNNoise 降噪（soxr 高质量重采样）
+        kws_proc,                       # 3. KWS 唤醒词检测
+        asr_proc,                       # 4. ASR 识别（响应 VAD frames）
+        user_aggregator,                # 5. ✅ 用户消息聚合（OpenAI/Anthropic 各自的）
+        vision_proc,                    # 6. ✅ Vision（直接修改 context）
+        llm,                            # 7. ✅ LLM 生成（处理各自的 ContextFrame）
+        tts_proc,                       # 8. ✅ TTS 合成
+        assistant_aggregator,           # 9. ✅ 助手响应聚合（OpenAI/Anthropic 各自的）
+        transport.output(),             # 10. ✅ 官方音频输出
     ])
 
     print("✓ Pipeline 已构建（统一 Pipeline + 各自的 Aggregator）")
