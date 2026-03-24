@@ -2,13 +2,13 @@
 
 <div align="center">
 
-**双阶段语音识别 + 多 LLM 服务 + Playwright 浏览器控制 + 实时音频处理**
+**中文语音助手 v2.9.0 - RNNoise 降噪 + Agent Skills + Claude Code 设计**
 
-基于 Sherpa-ONNX + Pipecat LLM Service + Playwright MCP + Piper + Pipecat 的中文语音助手
+双阶段语音识别 + 多 LLM 服务 + MCP 工具集成 + Agent Skills + 智能音频处理
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.5.0-green.svg)](https://github.com/yourusername/chinese-voice-assistant)
+[![Version](https://img.shields.io/badge/version-2.9.0-green.svg)](https://github.com/yourusername/chinese-voice-assistant)
 
 </div>
 
@@ -24,6 +24,7 @@
   - **Qwen** - 阿里云 DashScope（中文优化，Function Calling）
   - **DeepSeek** - DeepSeek API（强推理，低成本）
   - **OpenAI** - 官方 API（GPT-4o, o1 等）
+  - **Anthropic Claude** - Claude Sonnet 4.5/Opus 4.6（支持 Thinking 模式）
   - 基于 Pipecat 官方框架（继承 OpenAILLMService）
   - **完全异步执行**，自动管理对话历史
   - **统一接口**，通过 `.env` 一键切换模型
@@ -33,6 +34,13 @@
   - 网页导航、元素交互、截图、PDF生成等
   - 支持 Chrome/Firefox/Safari 浏览器控制
   - **完全异步**的工具调用（符合 MCP 官方最佳实践）
+
+- **🔧 Agent Skills**: Claude Code 设计的技能系统
+  - LLM 自主判断使用哪个技能（无需关键词匹配）
+  - 技能描述注入到 system prompt
+  - 统一的 `skill_execute` 函数接口
+  - 支持自定义技能扩展
+  - 零停用词、零关键词匹配、零干扰
 
 - **🔊 语音合成**: 多引擎支持
   - **Piper TTS** - 本地超低延迟（推荐）⚡
@@ -50,11 +58,30 @@
   - 统一接口，工厂模式设计
   - **完全异步化**（asyncio + PIL）
 
+- **🔊 音频降噪**: RNNoise + soxr 高质量音频处理
+  - **RNNoise** - 深度学习降噪（<5ms 延迟）
+  - **soxr** - 高质量音频重采样
+  - 可选降噪模式：rnnoise / noise_gate / pass_through
+  - 仅影响 ASR，保持原始音频质量
+
+- **⏰ Idle Detection**: 智能空闲检测
+  - 3分钟无活动自动结束对话
+  - 播放告别语音
+  - 可自定义超时时间
+  - Pipeline 事件处理器
+
+- **🎧 音频设备配置**: 交互式设备选择
+  - 启动时自动检测音频设备
+  - 支持指定输入/输出设备
+  - 避免立体声混音问题
+  - 设备索引持久化保存
+
 ### 🎨 技术亮点（混合架构）
-- ⚡ **多 LLM 服务工厂** - 支持 Qwen/DeepSeek/OpenAI 灵活切换✨
+- ⚡ **多 LLM 服务工厂** - 支持 Qwen/DeepSeek/OpenAI/Anthropic 灵活切换✨
 - 🎯 **官方 LLM Service** - 继承 OpenAILLMService（官方框架）✨
 - 🔄 **自动对话管理** - LLMContextAggregator（官方框架）✨
 - 🛠️ **Function Calling** - MCP 工具无缝集成（官方机制）✨
+- 🧩 **Agent Skills 系统** - Claude Code 设计，LLM 自主判断✨
 - 🚀 **保留自定义优势** - KWS + ASR + Piper TTS（本地、免费）
 - 🛡️ **完全异步架构** - 纯异步，无线程开销
 - 👁️ **多模型 Vision 系统** - 本地/云端模型可配置切换
@@ -62,6 +89,18 @@
   - ✅ 理解语言上下文（语法、语调、语义）
   - ✅ 避免句子中间被打断
   - ✅ 本地 CPU 推理（<100ms 延迟）
+- 🔇 **RNNoise 降噪** - 深度学习音频降噪（<5ms 延迟）✨
+  - ✅ soxr 高质量重采样
+  - ✅ 仅影响 ASR，保持原始音频
+  - ✅ 可选降噪模式
+- ⏰ **Idle Detection** - 智能空闲检测和自动退出✨
+  - ✅ 3分钟无活动自动结束
+  - ✅ Pipeline 事件处理器
+  - ✅ 可自定义超时时间
+- 🎧 **音频设备配置** - 交互式设备选择✨
+  - ✅ 启动时自动检测
+  - ✅ 避免立体声混音
+  - ✅ 设备索引持久化
 - ⏸️ **标准中断机制** - 使用 Pipecat 官方 `InterruptionFrame`
   - ✅ 生态兼容：可与官方 TTS/LLM Processor 配合
   - ✅ 统一协调：`allow_interruptions` 全局管理
@@ -73,12 +112,16 @@
 - ✅ ASR 语音识别（Sherpa-ONNX，本地）
 - ✅ Piper TTS（本地，超低延迟）
 - ✅ 多模型 Vision（Moondream 本地 + Qwen-VL API，可切换）
+- ✅ RNNoise 降噪（深度学习音频处理）
+- ✅ Agent Skills 系统（Claude Code 设计）
+- ✅ 音频设备配置（交互式选择）
 
 **改用官方（享受生态）**：
-- ✨ LLM Service（多服务支持：Qwen/DeepSeek/OpenAI）
+- ✨ LLM Service（多服务支持：Qwen/DeepSeek/OpenAI/Anthropic）
 - ✨ Context Aggregator（自动管理历史）
 - ✨ Function Calling（MCP 工具集成）
 - ✨ VAD + Smart Turn（Silero VAD + Smart Turn v3）
+- ✨ Idle Detection（Pipeline 事件处理）
 
 ---
 
@@ -102,11 +145,11 @@ cd voice-assistant
 uv pip install -e .
 
 # 安装 Smart Turn v3 依赖（智能对话检测）
-uv pip install "pipecat-ai[local-smart-turn-v3]"
+uv pip install "pipecat-ai[local,moondream]"
 
 # 或使用 pip
 pip install -e .
-pip install "pipecat-ai[local-smart-turn-v3]"
+pip install "pipecat-ai[local,moondream]"
 ```
 
 ### 4. 下载模型
@@ -138,7 +181,7 @@ cp .env.example .env
 2. 编辑 `.env` 文件，填入你的 API 配置：
 ```bash
 # ==================== LLM 配置 ====================
-# 指定使用哪个 LLM 服务：qwen | deepseek | openai
+# 指定使用哪个 LLM 服务：qwen | deepseek | openai | anthropic
 LLM_SERVICE=qwen
 
 # Qwen (阿里云 DashScope) 配置组
@@ -159,6 +202,14 @@ QWEN_MODEL=qwen-plus
 # OPENAI_API_URL=https://api.openai.com/v1
 # OPENAI_MODEL=gpt-4o
 # 可选模型：gpt-4o, gpt-4, gpt-3.5-turbo, o1-preview, o1-mini
+
+# Anthropic Claude 配置组
+# ANTHROPIC_API_KEY=your-anthropic-api-key-here
+# ANTHROPIC_API_URL=https://api.anthropic.com
+# ANTHROPIC_MODEL=claude-sonnet-4-5-20250929
+# 可选模型：claude-sonnet-4-5-20250929, claude-opus-4-6-20250514
+# ANTHROPIC_ENABLE_THINKING=false  # 是否启用 Thinking 模式（Claude 扩展思考）
+# ANTHROPIC_THINKING_EFFORT=medium  # Thinking 努力程度：high, medium, low
 
 # ==================== Vision 服务配置 ====================
 # 指定使用哪个 Vision 服务：moondream | qwen-vl-plus | qwen-vl-max
@@ -197,6 +248,19 @@ LLM_SERVICE=qwen
 QWEN_API_KEY=your-key
 QWEN_API_URL=http://localhost:4000/v1
 QWEN_MODEL=Local1-Qwen3-235B
+```
+
+#### 切换到 Anthropic Claude（Sonnet 4.5）
+```bash
+LLM_SERVICE=anthropic
+ANTHROPIC_API_KEY=sk-ant-xxxxx
+ANTHROPIC_MODEL=claude-sonnet-4-5-20250929  # 或 claude-opus-4-6-20250514
+```
+
+#### 启用 Claude Thinking 模式（扩展思考）
+```bash
+ANTHROPIC_ENABLE_THINKING=true
+ANTHROPIC_THINKING_EFFORT=high  # high, medium, low
 ```
 
 ### 唤醒词配置
@@ -396,36 +460,50 @@ uv run python -m src.voice_assistant.pipecat_main_v2
 ```
 chinese-voice-assistant/
 ├── src/voice_assistant/      # 核心源代码
-│   ├── __init__.py           # 模块导出 (40行)
-│   ├── config.py             # 配置管理 (55行)
-│   ├── wake_word.py          # 模型加载器 (95行)
-│   ├── react_agent.py        # React 智能代理 (603行)
-│   │                         # - 完全异步执行（Pipecat 模式）
-│   ├── mcp_client.py         # MCP 客户端 (378行)
-│   │                         # - MCPManager (异步，多Server管理)
-│   ├── llm_services.py       # LLM 服务工厂 (280行)
-│   │                         # - QwenLLMService, DeepSeekLLMService, OpenAILLMServiceWrapper
-│   │                         # - LLMFactory (工厂模式)
-│   ├── qwen_llm_service.py   # MCP 工具转换器 (180行)
+│   ├── __init__.py           # 模块导出（延迟导入）
+│   ├── config.py             # 配置管理（环境变量）
+│   ├── wake_word.py          # 唤醒词系统
+│   ├── mcp_client.py         # MCP 客户端（异步，多Server管理）
+│   ├── llm_services.py       # LLM 服务工厂
+│   │                         # - QwenLLMService, DeepSeekLLMService
+│   │                         # - OpenAILLMServiceWrapper, AnthropicLLMService
+│   │                         # - LLMFactory（工厂模式）
+│   ├── qwen_llm_service.py   # MCP 工具转换器和函数注册
 │   │                         # - MCP Tools → OpenAI 格式
 │   │                         # - Function Calling 注册
-│   ├── pipecat_main_v2.py    # Pipecat 主程序 v2 (365行)
-│   │                         # - 符合官方架构（BaseTransport + CancelFrame）
-│   │                         # - 使用 LLM 工厂模式
-│   ├── pyaudio_transport.py  # PyAudio Transport (201行)
+│   │                         # - skill_execute, openmeteo_weather
+│   ├── pipecat_main_v2.py    # Pipecat 主程序 v3.1
+│   │                         # - 符合官方架构
+│   │                         # - LLM 工厂模式
+│   │                         # - Agent Skills 集成
+│   │                         # - Idle Detection
+│   ├── pyaudio_transport.py  # PyAudio Transport
 │   │                         # - 标准 BaseTransport 实现
-│   ├── vad_processor.py      # VAD Processor (63行)
-│   │                         # - Silero VAD 集成（开发中）
-│   ├── pipecat_adapters.py   # Pipecat Processors (676行)
+│   ├── audio_processors.py   # 音频处理器
+│   │                         # - RNNoise 降噪
+│   │                         # - soxr 高质量重采样
+│   ├── audio_device_setup.py # 音频设备配置
+│   │                         # - 交互式设备选择
+│   ├── pipecat_adapters.py   # Pipecat Processors
 │   │                         # - SherpaKWSProcessor (KWS)
-│   │                         # - SherpaASRProcessor (ASR + 临时 RMS VAD)
+│   │                         # - SherpaASRProcessor (ASR)
 │   │                         # - VisionProcessor (Vision)
 │   │                         # - PiperTTSProcessor (TTS)
-│   ├── vision_services.py    # Vision 服务工厂 (233行)
-│   │                         # - MoondreamVisionService, QwenVLVisionService
-│   │                         # - VisionFactory (工厂模式)
-│   ├── tts.py                # TTS 语音合成 (372行)
-│   └── vision.py             # 视觉理解 (136行)
+│   ├── vision_services.py    # Vision 服务工厂
+│   │                         # - Moondream, Qwen-VL
+│   │                         # - VisionFactory（工厂模式）
+│   ├── tts.py                # TTS 语音合成管理
+│   ├── vision.py             # 视觉理解
+│   └── skills/               # Agent Skills 系统
+│       ├── base_skill.py     # 技能基类
+│       ├── skill_loader.py   # 技能加载器
+│       ├── skill_manager.py  # 技能管理器
+│       └── skill_executor.py # 技能执行器
+│
+├── skills/                   # 技能目录
+│   ├── browser/              # 浏览器技能
+│   ├── calendar/             # 日历技能
+│   └── weather/              # 天气技能
 │
 ├── scripts/                  # 工具脚本
 │   ├── download_models.py    # 模型下载
@@ -442,37 +520,42 @@ chinese-voice-assistant/
 │   └── interruption-analysis.md      # 中断机制分析
 │
 ├── config/                   # 配置文件
-│   └── keywords.txt          # 唤醒词配置
+│   ├── keywords.txt          # 唤醒词配置
+│   └── mcp_servers.json      # MCP Server 配置
 │
 ├── models/                   # 模型文件（需下载）
 │   ├── piper/                # Piper TTS 模型
 │   ├── sherpa-onnx-kws-*/    # KWS 模型 (3.3MB)
 │   └── sherpa-onnx-paraformer-zh/ # ASR 模型 (120MB)
 │
-├── main.py                   # 主程序入口 (35行)
-├── pyproject.toml            # 项目配置 (v2.4.0)
+├── main.py                   # 主程序入口
+├── pyproject.toml            # 项目配置 (v2.9.0)
 └── README.md                 # 项目文档
 ```
 
 ### 代码统计
 | 模块 | 代码行数 | 主要功能 |
 |-----|---------|---------|
-| `pipecat_adapters.py` | 676 | Pipecat Processors（KWS/ASR+VAD/Vision/TTS） |
+| `pipecat_adapters.py` | 676 | Pipecat Processors（KWS/ASR/Vision/TTS） |
+| `pipecat_main_v2.py` | 656 | Pipecat 主程序 v3.1（LLM 工厂 + Skills + Idle） |
+| `llm_services.py` | 523 | LLM 服务工厂（Qwen/DeepSeek/OpenAI/Anthropic） |
+| `qwen_llm_service.py` | 521 | MCP 工具转换 + 函数注册 + Skills |
+| `mcp_client.py` | 421 | MCP 客户端（异步多 Server） |
 | `react_agent.py` | 603 | React 推理框架（完全异步） |
-| `mcp_client.py` | 378 | MCP 客户端（异步多 Server） |
 | `tts.py` | 372 | TTS 引擎管理（Piper/RealtimeTTS） |
-| `pipecat_main_v2.py` | 365 | Pipecat Pipeline v2（LLM 工厂） |
-| `llm_services.py` | 280 | LLM 服务工厂（Qwen/DeepSeek/OpenAI） |
 | `vision_services.py` | 233 | Vision 服务工厂（多模型支持） |
-| `pyaudio_transport.py` | 201 | 标准 PyAudio Transport |
+| `pyaudio_transport.py` | 328 | PyAudio Transport（VAD + Turn Detection） |
+| `audio_processors.py` | 306 | 音频处理器（RNNoise + soxr） |
+| `audio_device_setup.py` | 245 | 音频设备配置（交互式选择） |
 | `qwen_llm_service.py` | 180 | MCP 工具转换器 + 函数注册 |
 | `vision.py` | 136 | Qwen-VL-Max 视觉理解（异步） |
 | `wake_word.py` | 95 | 模型加载器（KWS + ASR） |
-| `vad_processor.py` | 63 | Silero VAD Processor（开发中） |
-| `config.py` | 55 | 全局配置（LLM + Vision） |
-| `__init__.py` | 40 | 模块导出 |
-| `main.py` | 35 | Pipecat 单一入口 |
-| **总计** | **~3,682** | **v2.4.0 完整实现** |
+| `vad_processor.py` | 64 | VAD Processor |
+| `config.py` | 179 | 全局配置（LLM + Vision + MCP） |
+| `skills/` | ~500 | Agent Skills 系统 |
+| `__init__.py` | 143 | 模块导出（延迟导入） |
+| `main.py` | 49 | 主程序入口 |
+| **总计** | **~5,600** | **v2.9.0 完整实现** |
 
 ---
 
@@ -492,24 +575,26 @@ ruff check src/
 
 ### 架构说明
 
-#### **Pipecat v2.2.1 架构**
+#### **Pipecat v3.1 架构（最新）**
 ```
 Pipeline:
   PyAudioTransport.input() (音频输入 - 标准 BaseTransport + VAD + Turn Detection)
     ↓
   SherpaKWSProcessor (唤醒词检测 - 自定义)
     ↓
+  NoiseReductionProcessor (RNNoise 降噪 - 自定义 ✨)
+    ↓
   SherpaASRProcessor (语音识别 - 自定义，响应 VAD 事件)
     ↓
-  OpenAIUserContextAggregator (添加用户消息 - 官方 ✨)
+  UserAggregator (添加用户消息 - 官方 ✨)
     ↓
   VisionProcessor (视觉理解 - 自定义)
     ↓
-  QwenLLMService (LLM + Function Calling - 官方 ✨)
+  LLM Service (LLM + Function Calling - 官方 ✨)
     ↓
-  PiperTTSProcessor (语音合成 - 自定义) ← ✨ v2.2.1 调整：提前到这里
+  PiperTTSProcessor (语音合成 - 自定义)
     ↓
-  OpenAIAssistantContextAggregator (保存助手响应 - 官方 ✨)
+  AssistantAggregator (保存助手响应 - 官方 ✨)
     ↓
   PyAudioTransport.output() (音频输出 - 标准 BaseTransport)
 ```
@@ -519,7 +604,10 @@ Pipeline:
 - ✅ Smart Turn v3（智能判断对话完成，理解语言上下文）
 - ✅ 避免句子中间被打断
 - ✅ 支持 23 种语言
-- ✅ **v2.2.1 修复**：TTS 在 aggregator 之前，确保接收 LLM 输出
+- ✅ **RNNoise 降噪**（深度学习音频处理，<5ms 延迟）✨
+- ✅ **Idle Detection**（3分钟无活动自动结束）✨
+- ✅ **Agent Skills**（LLM 自主判断使用技能）✨
+- ✅ **多 LLM 支持**（Qwen/DeepSeek/OpenAI/Anthropic）✨
 
 ### 核心改进
 
@@ -586,14 +674,17 @@ Pipeline([
 | 混合 TTS | MeloTTS | 中英文支持 |
 | **智能决策** | | |
 | LLM 框架 | Pipecat LLM Service | 官方框架 + 自动历史管理 |
-| LLM 模型 | Qwen-Plus | 意图理解+规划 |
+| LLM 模型 | Qwen/DeepSeek/OpenAI/Claude | 多模型支持，工厂模式切换 |
 | Function Calling | MCP Protocol | 工具无缝集成 |
+| Agent Skills | Claude Code 设计 | LLM 自主判断技能使用 |
 | **浏览器控制** | | |
 | MCP 框架 | Model Context Protocol | 官方 Python SDK v1.25.0 |
 | 浏览器自动化 | Playwright MCP | 跨浏览器支持 |
 | **音频处理** | | |
 | 实时框架 | Pipecat AI v0.0.98 | Frame/Pipeline/Processor |
 | 音频I/O | PyAudio | 录音播放 |
+| 音频降噪 | RNNoise + soxr | 深度学习降噪 + 高质量重采样 ✨ |
+| 空闲检测 | Idle Detection | 3分钟无活动自动退出 ✨ |
 | **视觉理解** | | |
 | 多模态模型 | Qwen-VL-Max | 屏幕内容分析 |
 | 截图工具 | PIL ImageGrab | 屏幕截图 |
@@ -653,6 +744,106 @@ A:
 ---
 
 ## 🔥 最近更新
+
+### v2.9.0 - RNNoise 降噪 + Agent Skills + Claude Code 设计（2025-03-25）
+
+#### ✨ 核心特性
+1. **Agent Skills 系统** - Claude Code 设计
+   - LLM 自主判断使用哪个技能（无需关键词匹配）
+   - 技能描述注入到 system prompt
+   - 统一的 `skill_execute` 函数接口
+   - 支持自定义技能扩展（browser、calendar、weather）
+   - 零停用词、零关键词匹配、零干扰
+
+2. **RNNoise 音频降噪** - 深度学习降噪
+   - RNNoise 深度学习降噪（<5ms 延迟）
+   - soxr 高质量音频重采样
+   - 可选降噪模式：rnnoise / noise_gate / pass_through
+   - 仅影响 ASR，保持原始音频质量
+
+3. **Idle Detection** - 智能空闲检测
+   - 3分钟无活动自动结束对话
+   - 播放告别语音
+   - 可自定义超时时间
+   - Pipeline 事件处理器
+
+4. **音频设备配置** - 交互式设备选择
+   - 启动时自动检测音频设备
+   - 支持指定输入/输出设备
+   - 避免立体声混音问题
+   - 设备索引持久化保存
+
+5. **Anthropic Claude 支持** - 扩展模型支持
+   - 支持 Claude Sonnet 4.5 / Opus 4.6
+   - 支持自定义 base_url（如智谱 GLM API）
+   - 支持 Thinking 模式（扩展思考）
+   - 完全兼容 Pipecat 官方 AnthropicLLMService
+
+6. **Open-Meteo 天气 API** - 免费天气查询
+   - 无需 API 密钥
+   - 全球城市天气查询
+   - 实时温度、湿度、风速
+   - WMO 天气代码映射
+
+#### 🔧 技术实现
+```python
+# Agent Skills 集成
+skill_manager = SkillManager(skills_dir)
+await skill_manager.initialize()
+skill_manager.set_llm_service(llm)
+
+# RNNoise 降噪
+noise_reduction_proc = create_noise_reduction_processor(
+    method="rnnoise",
+    enable_debug=False
+)
+
+# Idle Detection
+task = PipelineTask(
+    pipeline,
+    idle_timeout_secs=180,  # 3分钟
+    cancel_on_idle_timeout=False
+)
+
+# Anthropic Claude
+llm = create_llm_service(
+    service="anthropic",
+    api_key="sk-ant-xxxxx",
+    model="claude-sonnet-4-5-20250929",
+    enable_thinking=True,
+    thinking_effort="high"
+)
+```
+
+#### 📝 新增文件
+- `src/voice_assistant/skills/` - Agent Skills 系统
+  - `base_skill.py` - 技能基类
+  - `skill_loader.py` - 技能加载器
+  - `skill_manager.py` - 技能管理器
+  - `skill_executor.py` - 技能执行器
+- `src/voice_assistant/audio_processors.py` - 音频处理器
+- `src/voice_assistant/audio_device_setup.py` - 音频设备配置
+- `skills/` - 技能目录
+  - `browser/` - 浏览器技能
+  - `calendar/` - 日历技能
+  - `weather/` - 天气技能
+
+#### 🎯 技术亮点
+- ✅ Agent Skills - Claude Code 设计，LLM 自主判断
+- ✅ RNNoise 降噪 - 深度学习音频处理
+- ✅ Idle Detection - 智能空闲检测和自动退出
+- ✅ 音频设备配置 - 交互式设备选择
+- ✅ Anthropic Claude - 扩展模型支持
+- ✅ Open-Meteo API - 免费天气查询
+- ✅ Pipeline 事件处理 - 官方事件处理器
+- ✅ 统一 LLM Context - 支持所有 LLM 服务
+
+#### 📊 代码统计
+- 新增代码：~1,900 行（Skills 系统 + 音频处理）
+- 总代码量：~5,600 行
+- 文件数量：25+ 个核心文件
+
+---
 
 ### v2.5.0 - MCP Server 配置文件化（2025-12-30）
 
