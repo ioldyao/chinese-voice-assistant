@@ -106,6 +106,23 @@ class PyAudioOutputTransport(BaseOutputTransport):
         self.transport = transport
         self._first_audio = True  # 首次播放标志
 
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        """
+        处理帧（重写以添加音频播放逻辑）
+
+        这是 BaseOutputTransport 的标准接口，我们需要：
+        1. 调用父类方法（处理一些初始化）
+        2. 检查是否是 OutputAudioRawFrame
+        3. 如果是，播放音频
+        """
+        # 先调用父类方法（处理 StartFrame 等）
+        await super().process_frame(frame, direction)
+
+        # 检查是否是音频输出帧
+        if isinstance(frame, OutputAudioRawFrame):
+            # ✅ 直接播放音频
+            await self.write_audio_frame(frame)
+
     async def write_audio_frame(self, frame: OutputAudioRawFrame):
         """
         写入音频帧到输出设备（被 MediaSender 调用）
