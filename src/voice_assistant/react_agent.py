@@ -11,6 +11,7 @@ from .config import (
     DASHSCOPE_API_KEY, DASHSCOPE_API_URL,
     TTS_SERVICE,
     PIPER_TTS_MODEL_PATH,
+    DASHSCOPE_TTS_MODEL,
     DASHSCOPE_TTS_VOICE,
     EDGE_TTS_VOICE,
     AZURE_TTS_API_KEY, AZURE_TTS_REGION, AZURE_TTS_VOICE,
@@ -637,6 +638,7 @@ Final Answer: [总结结果]
             "dashscope": {
                 "engine_type": "dashscope",
                 "api_key": DASHSCOPE_API_KEY,
+                "model": DASHSCOPE_TTS_MODEL,
                 "voice": DASHSCOPE_TTS_VOICE,
             },
             "edge": {
