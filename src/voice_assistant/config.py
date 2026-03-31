@@ -75,7 +75,28 @@ CHUNK_SIZE = 512
 AUDIO_INPUT_DEVICE_INDEX = os.getenv("AUDIO_INPUT_DEVICE_INDEX", None)
 AUDIO_OUTPUT_DEVICE_INDEX = os.getenv("AUDIO_OUTPUT_DEVICE_INDEX", None)
 
-# TTS配置
+# ==================== TTS 配置 ====================
+# 指定使用哪个 TTS 引擎：piper | dashscope | edge | azure | coqui
+TTS_SERVICE = os.getenv("TTS_SERVICE", "piper")  # 默认使用 piper
+
+# Piper TTS 配置（本地，最快）
+PIPER_TTS_MODEL_PATH = os.getenv(
+    "PIPER_TTS_MODEL_PATH",
+    str(MODELS_DIR / "piper" / "zh_CN-huayan-medium.onnx")
+)
+
+# DashScope TTS 配置（阿里云，音质好）
+DASHSCOPE_TTS_VOICE = os.getenv("DASHSCOPE_TTS_VOICE", "Cherry")
+
+# Edge TTS 配置（微软免费）
+EDGE_TTS_VOICE = os.getenv("EDGE_TTS_VOICE", "zh-CN-XiaoxiaoNeural")
+
+# Azure TTS 配置（高质量，需付费）
+AZURE_TTS_API_KEY = os.getenv("AZURE_TTS_API_KEY")
+AZURE_TTS_REGION = os.getenv("AZURE_TTS_REGION", "eastasia")
+AZURE_TTS_VOICE = os.getenv("AZURE_TTS_VOICE", "zh-CN-XiaoxiaoNeural")
+
+# TTS缓存配置
 TTS_SHORT_TEXT_LIMIT = 280  # 短文本TTS字符限制
 TTS_CACHE_TIMEOUT_SHORT = 10  # 短文本缓存清理时间（秒）
 TTS_CACHE_TIMEOUT_LONG = 30   # 长文本缓存清理时间（秒）
