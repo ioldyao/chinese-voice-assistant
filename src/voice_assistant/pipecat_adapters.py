@@ -414,7 +414,7 @@ class PiperTTSProcessor(FrameProcessor):
                     sentence = parts[0] + delimiter  # 包含标点符号
                     self.sentence_buffer = parts[1] if len(parts) > 1 else ""
 
-                    # 立即合成完整句子（静默，只在需要时打印）
+                    # 立即合成完整句子
                     await self._synthesize_and_push(sentence.strip())
                     break
 
@@ -456,6 +456,7 @@ class PiperTTSProcessor(FrameProcessor):
         Returns:
             bool: 是否被中断
         """
+        # Piper TTS
         if self.tts.engine_type == "piper":
             try:
                 # 使用 Piper TTS 生成音频
@@ -497,7 +498,73 @@ class PiperTTSProcessor(FrameProcessor):
                 print(f"❌ TTS 生成失败: {e}")
                 return False
 
-        return False
+        # DashScope TTS（流式合成）
+        elif self.tts.engine_type == "dashscope":
+            try:
+                import base64
+
+                # 调用 DashScope MultiModalConversation API（流式）
+                response = self.tts.dashscope.MultiModalConversation.call(
+                    model=self.tts.model,
+                    api_key=self.tts.api_key,
+                    text=text,
+                    voice=self.tts.voice,
+                    language_type='Chinese',
+                    stream=True
+                )
+
+                # 遍历流式响应
+                for chunk in response:
+                    # 检查中断标志
+                    if self.interrupt_flag:
+                        return True
+
+                    # 检查响应状态
+                    if chunk.status_code != 200:
+                        continue
+
+                    # 获取 Base64 编码的音频数据
+                    if hasattr(chunk.output, 'audio') and hasattr(chunk.output.audio, 'data'):
+                        audio_b64 = chunk.output.audio.data
+                        if audio_b64:
+                            # 解码 Base64 音频数据（24kHz, 16bit PCM）
+                            audio_data_24k = base64.b64decode(audio_b64)
+
+                            # ✅ 重采样到 16kHz（使用 numpy）
+                            audio_24k = np.frombuffer(audio_data_24k, dtype=np.int16)
+                            samples_ratio = len(audio_24k) * 16000 // 24000
+                            audio_16k = np.interp(
+                                np.linspace(0, len(audio_24k) - 1, samples_ratio),
+                                np.arange(len(audio_24k)),
+                                audio_24k.astype(np.float32)
+                            ).astype(np.int16)
+
+                            # ✅ 生成标准 OutputAudioRawFrame（16kHz, 16bit, 单声道）
+                            audio_frame = OutputAudioRawFrame(
+                                audio=audio_16k.tobytes(),
+                                sample_rate=16000,
+                                num_channels=1
+                            )
+
+                            # ✅ 推送到 Pipeline
+                            if self._loop:
+                                future = asyncio.run_coroutine_threadsafe(
+                                    self.push_frame(audio_frame, FrameDirection.DOWNSTREAM),
+                                    self._loop
+                                )
+                                future.result(timeout=1.0)
+
+                return False  # 正常完成，未中断
+
+            except Exception as e:
+                print(f"❌ DashScope TTS 生成失败: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+
+        else:
+            print(f"⚠️  不支持的 TTS 引擎: {self.tts.engine_type}")
+            return False
 
 
 # ==================== Vision Processor (符合 Pipecat 标准) ====================
