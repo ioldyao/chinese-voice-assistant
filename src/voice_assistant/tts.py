@@ -2,9 +2,12 @@
 import threading
 import time
 import wave
+import asyncio
+import base64
 from pathlib import Path
 import pyaudio
 import requests
+import numpy as np
 
 from .config import (
     DASHSCOPE_API_KEY,
@@ -25,7 +28,7 @@ class TTSManager:
     - coqui TTS（本地）
     """
 
-    def __init__(self, engine_type="piper", api_key=None, voice=None, model_path=None):
+    def __init__(self, engine_type="piper", api_key=None, voice=None, model_path=None, model=None):
         """
         初始化流式TTS
 
@@ -34,6 +37,7 @@ class TTSManager:
             api_key: DashScope/Azure API key
             voice: 自定义音色名称
             model_path: Piper 模型路径（仅 piper 引擎需要）
+            model: DashScope TTS 模型名称（仅 dashscope 引擎需要）
         """
         self.is_playing = False
         self.stream = None
@@ -63,18 +67,24 @@ class TTSManager:
             print(f"✓ 使用 Piper TTS（本地，超快）- 模型: {Path(model_path).name}")
             return
 
-        # DashScope 引擎
+        # DashScope 引擎（流式合成）
         if engine_type == "dashscope":
             self.api_key = api_key or DASHSCOPE_API_KEY
+            self.model = model or "qwen3-tts-flash"  # 默认模型
             self.voice = voice or "Cherry"
 
             try:
                 import dashscope
+                from dashscope.api_entities.dashscope_response import MultiModalConversationResponse
+
+                # 设置 API Key
                 dashscope.api_key = self.api_key
                 dashscope.base_http_api_url = 'https://dashscope.aliyuncs.com/api/v1'
+
+                # 保存引用
                 self.dashscope = dashscope
-            except ImportError:
-                raise ImportError("需要安装 dashscope: pip install dashscope")
+            except ImportError as e:
+                raise ImportError(f"需要安装 dashscope: uv add dashscope\n错误详情: {e}")
 
             self.audio_dir = TTS_AUDIO_DIR
             self.audio_dir.mkdir(parents=True, exist_ok=True)
@@ -82,7 +92,7 @@ class TTSManager:
             self.should_stop = False
             self.current_stream = None
 
-            print(f"✓ 使用 DashScope TTS（阿里云）- 音色: {self.voice}")
+            print(f"✓ 使用 DashScope TTS 流式合成（阿里云）- 模型: {self.model}, 音色: {self.voice}")
             return
 
         # 导入 RealtimeTTS（按需导入）
@@ -140,6 +150,65 @@ class TTSManager:
         # 创建流
         self.stream = TextToAudioStream(self.engine)
         print(f"✓ RealtimeTTS 流式引擎已初始化")
+
+    def _play_streaming_audio(self, wait=True):
+        """
+        播放流式音频（边生成边播放）
+
+        Args:
+            wait: 是否等待播放完成
+        """
+        stream = None
+        try:
+            # 打开 PyAudio 流（24kHz, 16bit, 单声道）
+            stream = self.p.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=24000,  # DashScope TTS 默认采样率
+                output=True,
+                frames_per_buffer=1024
+            )
+            self.current_stream = stream
+
+            print("[DashScope] 开始播放流式音频...")
+
+            # 从队列中获取音频帧并播放
+            while not self.should_stop:
+                try:
+                    # 等待音频帧（超时 0.1 秒）
+                    frame = self.audio_queue.get(timeout=0.1)
+
+                    # 检查结束信号
+                    if frame is None:
+                        print("[DashScope] 流式播放完成")
+                        break
+
+                    # 播放音频帧
+                    stream.write(frame)
+
+                except queue.Empty:
+                    # 队列为空，继续等待
+                    continue
+                except Exception as e:
+                    print(f"[DashScope] 播放音频帧失败: {e}")
+                    break
+
+            if self.should_stop:
+                print("[DashScope] 流式播放已打断")
+
+        except Exception as e:
+            print(f"[DashScope] 播放流式音频失败: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            # 清理资源
+            if stream:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except:
+                    pass
+            self.current_stream = None
 
     def _play_audio_file(self, audio_file):
         """使用PyAudio直接播放音频文件（DashScope 引擎使用）"""
@@ -254,44 +323,79 @@ class TTSManager:
                 if self.should_stop:
                     print("   [Piper TTS已打断]")
 
-            # DashScope 引擎
+            # DashScope 引擎（流式合成）
             elif self.engine_type == "dashscope":
                 self.is_playing = True
+                self.should_stop = False
 
-                # 调用 DashScope API
-                response = self.dashscope.MultiModalConversation.call(
-                    model="qwen3-tts-flash",
-                    api_key=self.api_key,
-                    text=text,
-                    voice=self.voice,
-                    language_type="Chinese",
-                    stream=False
-                )
+                try:
+                    import base64
 
-                if response.status_code == 200:
-                    audio_url = response.output.audio.url
-                    audio_response = requests.get(audio_url, timeout=10)
-                    if audio_response.status_code == 200:
-                        audio_file = self.audio_dir / f"tts_{int(time.time())}.wav"
-                        with open(audio_file, 'wb') as f:
-                            f.write(audio_response.content)
+                    # 调用 DashScope MultiModalConversation API（流式）
+                    # 使用配置的模型（可通过 .env 配置）
+                    response = self.dashscope.MultiModalConversation.call(
+                        model=self.model,
+                        api_key=self.api_key,
+                        text=text,
+                        voice=self.voice,
+                        language_type='Chinese',
+                        stream=True  # 启用流式输出
+                    )
 
-                        if wait:
-                            self._play_audio_file(audio_file)
-                        else:
-                            threading.Thread(
-                                target=self._play_audio_file,
-                                args=(audio_file,),
-                                daemon=True
-                            ).start()
+                    # 创建 PyAudio 流（24kHz, 16bit, 单声道）
+                    stream = self.p.open(
+                        format=pyaudio.paInt16,
+                        channels=1,
+                        rate=24000,  # DashScope TTS 默认采样率
+                        output=True,
+                        frames_per_buffer=1024
+                    )
+                    self.current_stream = stream
 
-                        # 10秒后清理临时文件
-                        threading.Timer(
-                            TTS_CACHE_TIMEOUT_SHORT,
-                            lambda: self._delete_file(audio_file)
-                        ).start()
-                else:
-                    print(f"TTS错误: {response.status_code} - {response.message}")
+                    print("[DashScope] 开始播放流式音频...")
+
+                    # 遍历流式响应
+                    audio_played = False
+                    for chunk in response:
+                        if self.should_stop:
+                            print("[DashScope] 流式播放已打断")
+                            break
+
+                        # 检查响应状态
+                        if chunk.status_code != 200:
+                            print(f"[DashScope] API 错误: {chunk.message}")
+                            break
+
+                        # 获取 Base64 编码的音频数据
+                        if hasattr(chunk.output, 'audio') and hasattr(chunk.output.audio, 'data'):
+                            audio_b64 = chunk.output.audio.data
+                            if audio_b64:
+                                # 解码 Base64 音频数据
+                                audio_data = base64.b64decode(audio_b64)
+
+                                # 播放音频
+                                stream.write(audio_data)
+                                audio_played = True
+
+                    if not self.should_stop and audio_played:
+                        print("[DashScope] 流式播放完成")
+                    elif not audio_played:
+                        print("[DashScope] 未收到音频数据")
+
+                except Exception as e:
+                    print(f"[DashScope] 流式合成失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+                finally:
+                    # 清理资源
+                    if self.current_stream:
+                        try:
+                            self.current_stream.stop_stream()
+                            self.current_stream.close()
+                        except:
+                            pass
+                    self.current_stream = None
+                    self.is_playing = False
 
                 if wait:
                     self.is_playing = False

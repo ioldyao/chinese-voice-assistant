@@ -7,7 +7,15 @@ from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import DASHSCOPE_API_KEY, DASHSCOPE_API_URL
+from .config import (
+    DASHSCOPE_API_KEY, DASHSCOPE_API_URL,
+    TTS_SERVICE,
+    PIPER_TTS_MODEL_PATH,
+    DASHSCOPE_TTS_MODEL,
+    DASHSCOPE_TTS_VOICE,
+    EDGE_TTS_VOICE,
+    AZURE_TTS_API_KEY, AZURE_TTS_REGION, AZURE_TTS_VOICE,
+)
 from .mcp_client import MCPManager, MCPResponse
 from .tts import TTSManager
 from .vision import VisionUnderstanding
@@ -143,8 +151,8 @@ class ReactAgent:
         # MCP Manager（管理多个 MCP Server）- 异步版本
         self.mcp = MCPManager()
 
-        # TTS（流式 - Piper 本地，超快）
-        self.tts = TTSManager(engine_type="piper")
+        # TTS（从 .env 配置读取引擎类型）
+        self.tts = self._create_tts()
 
         # Vision（视觉理解）
         self.vision = VisionUnderstanding(api_url, api_key)
@@ -607,3 +615,58 @@ Final Answer: [总结结果]
 
         except Exception as e:
             self.logger.warning(f"更新记忆失败: {e}")
+
+    def _create_tts(self) -> TTSManager:
+        """
+        根据 .env 配置创建 TTS 引擎
+
+        支持的引擎：
+        - piper: 本地神经网络 TTS（默认，最快）
+        - dashscope: 阿里云 TTS（音质好）
+        - edge: 微软 Edge TTS（免费）
+        - azure: Azure Speech Services（高质量）
+        - coqui: Coqui TTS（本地）
+
+        Returns:
+            TTSManager: TTS 管理器实例
+        """
+        tts_config = {
+            "piper": {
+                "engine_type": "piper",
+                "model_path": PIPER_TTS_MODEL_PATH,
+            },
+            "dashscope": {
+                "engine_type": "dashscope",
+                "api_key": DASHSCOPE_API_KEY,
+                "model": DASHSCOPE_TTS_MODEL,
+                "voice": DASHSCOPE_TTS_VOICE,
+            },
+            "edge": {
+                "engine_type": "edge",
+                "voice": EDGE_TTS_VOICE,
+            },
+            "azure": {
+                "engine_type": "azure",
+                "api_key": AZURE_TTS_API_KEY,
+                "voice": AZURE_TTS_VOICE,
+            },
+            "coqui": {
+                "engine_type": "coqui",
+            },
+        }
+
+        # 获取当前选择的 TTS 配置
+        service = TTS_SERVICE.lower()
+        if service not in tts_config:
+            self.logger.warning(
+                f"不支持的 TTS_SERVICE: {TTS_SERVICE}，使用默认的 piper"
+            )
+            service = "piper"
+
+        config = tts_config[service]
+
+        # 过滤掉 None 值
+        config = {k: v for k, v in config.items() if v is not None}
+
+        # 创建 TTS 引擎
+        return TTSManager(**config)
