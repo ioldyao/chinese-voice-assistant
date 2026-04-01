@@ -75,6 +75,10 @@ from .config import (
     ANTHROPIC_ENABLE_THINKING, ANTHROPIC_THINKING_EFFORT,
     load_mcp_servers_config,
     get_mcp_server_info,
+    TTS_SERVICE,
+    DASHSCOPE_REALTIME_MODEL,
+    DASHSCOPE_REALTIME_VOICE,
+    DASHSCOPE_REALTIME_MODE,
 )
 
 # ✅ 导入 Agent Skills（Claude Code 设计）
@@ -399,8 +403,29 @@ async def create_pipecat_pipeline():
         # use_cpu=False         # 可选：是否使用 CPU（仅 Moondream）
     )
 
-    # TTS Processor（不传入 transport）
-    tts_proc = PiperTTSProcessor(wake_system.agent.tts)
+    # TTS Processor（根据配置选择引擎）
+    if TTS_SERVICE == "dashscope_realtime":
+        # ✅ WebSocket Realtime TTS（低延迟，推荐）
+        print("⏳ 尝试初始化 DashScope Realtime TTS（WebSocket）...")
+        try:
+            from .tts_realtime_adapter import QwenRealtimeTTSProcessor
+
+            tts_proc = QwenRealtimeTTSProcessor(
+                model=DASHSCOPE_REALTIME_MODEL,
+                voice=DASHSCOPE_REALTIME_VOICE,
+                mode=DASHSCOPE_REALTIME_MODE,
+                api_key=QWEN_API_KEY
+            )
+            print("✓ DashScope Realtime TTS 配置成功")
+            print("  注意：WebSocket TTS 将在首次使用时初始化连接")
+        except Exception as e:
+            print(f"⚠️  DashScope Realtime TTS 配置失败: {e}")
+            print("   降级使用 Piper TTS（本地引擎）")
+            print("   提示：如需使用 WebSocket TTS，请确保安装了 dashscope>=1.25.11")
+            tts_proc = PiperTTSProcessor(wake_system.agent.tts)
+    else:
+        # 标准 TTS（Piper | DashScope HTTP | Edge | Azure）
+        tts_proc = PiperTTSProcessor(wake_system.agent.tts)
 
     print("✓ Processors 已创建")
 

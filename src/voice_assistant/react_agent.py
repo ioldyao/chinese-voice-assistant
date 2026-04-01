@@ -15,6 +15,8 @@ from .config import (
     DASHSCOPE_TTS_VOICE,
     EDGE_TTS_VOICE,
     AZURE_TTS_API_KEY, AZURE_TTS_REGION, AZURE_TTS_VOICE,
+    DASHSCOPE_REALTIME_MODEL,
+    DASHSCOPE_REALTIME_VOICE,
 )
 from .mcp_client import MCPManager, MCPResponse
 from .tts import TTSManager
@@ -641,6 +643,14 @@ Final Answer: [总结结果]
                 "model": DASHSCOPE_TTS_MODEL,
                 "voice": DASHSCOPE_TTS_VOICE,
             },
+            "dashscope_realtime": {
+                # ReactAgent 暂不支持 WebSocket Realtime
+                # 降级使用 DashScope HTTP 流式
+                "engine_type": "dashscope",
+                "api_key": DASHSCOPE_API_KEY,
+                "model": DASHSCOPE_TTS_MODEL,
+                "voice": DASHSCOPE_TTS_VOICE,
+            },
             "edge": {
                 "engine_type": "edge",
                 "voice": EDGE_TTS_VOICE,
@@ -662,6 +672,11 @@ Final Answer: [总结结果]
                 f"不支持的 TTS_SERVICE: {TTS_SERVICE}，使用默认的 piper"
             )
             service = "piper"
+
+        # 特殊处理：dashscope_realtime 降级到 dashscope
+        if service == "dashscope_realtime":
+            print("⚠️  ReactAgent 暂不支持 WebSocket Realtime TTS，降级使用 DashScope HTTP")
+            service = "dashscope"
 
         config = tts_config[service]
 

@@ -76,8 +76,14 @@ AUDIO_INPUT_DEVICE_INDEX = os.getenv("AUDIO_INPUT_DEVICE_INDEX", None)
 AUDIO_OUTPUT_DEVICE_INDEX = os.getenv("AUDIO_OUTPUT_DEVICE_INDEX", None)
 
 # ==================== TTS 配置 ====================
-# 指定使用哪个 TTS 引擎：piper | dashscope | edge | azure | coqui
+# 指定使用哪个 TTS 引擎：piper | dashscope | dashscope_realtime | edge | azure | coqui
 TTS_SERVICE = os.getenv("TTS_SERVICE", "piper")  # 默认使用 piper
+
+# DashScope Realtime WebSocket 配置（低延迟，推荐）
+DASHSCOPE_REALTIME_MODEL = os.getenv("DASHSCOPE_REALTIME_MODEL", "qwen3-tts-flash-realtime")
+DASHSCOPE_REALTIME_VOICE = os.getenv("DASHSCOPE_REALTIME_VOICE", "Cherry")
+DASHSCOPE_REALTIME_MODE = os.getenv("DASHSCOPE_REALTIME_MODE", "server_commit")  # server_commit | commit
+DASHSCOPE_REALTIME_URL = os.getenv("DASHSCOPE_REALTIME_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/realtime")
 
 # Piper TTS 配置（本地，最快）
 PIPER_TTS_MODEL_PATH = os.getenv(
@@ -85,15 +91,20 @@ PIPER_TTS_MODEL_PATH = os.getenv(
     str(MODELS_DIR / "piper" / "zh_CN-huayan-medium.onnx")
 )
 
-# DashScope TTS 配置（阿里云，音质好）
+# DashScope TTS 配置（阿里云，音质好，HTTP 流式）
 DASHSCOPE_TTS_MODEL = os.getenv("DASHSCOPE_TTS_MODEL", "qwen3-tts-flash")
 DASHSCOPE_TTS_VOICE = os.getenv("DASHSCOPE_TTS_VOICE", "Cherry")
 
-# DashScope TTS 可选模型：
+# DashScope TTS 可选模型（HTTP 流式）：
 # - qwen3-tts-flash（默认，快速，高质量）
 # - qwen3-tts-instruct-flash（支持指令控制）
 # - qwen-audio-turbo（极速）
 # - sambert-zhichu-v1（经典模型）
+
+# DashScope Realtime TTS 可选模型（WebSocket 流式，推荐）：
+# - qwen3-tts-flash-realtime（推荐，低延迟）
+# - qwen3-tts-instruct-flash-realtime（支持指令控制）
+# - qwen-tts-realtime（经典模型）
 
 # Edge TTS 配置（微软免费）
 EDGE_TTS_VOICE = os.getenv("EDGE_TTS_VOICE", "zh-CN-XiaoxiaoNeural")

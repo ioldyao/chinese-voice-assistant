@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**中文语音助手 v2.9.0 - RNNoise 降噪 + Agent Skills + Claude Code 设计**
+**中文语音助手 v2.9.0 - WebSocket 实时语音合成 + Agent Skills + Claude Code 设计**
 
 双阶段语音识别 + 多 LLM 服务 + MCP 工具集成 + Agent Skills + 智能音频处理
 
@@ -11,6 +11,63 @@
 [![Version](https://img.shields.io/badge/version-2.9.0-green.svg)](https://github.com/yourusername/chinese-voice-assistant)
 
 </div>
+
+## 🚀 快速开始
+
+### 1️⃣ 安装依赖
+
+```bash
+# 克隆项目
+git clone <repository-url>
+cd chinese-voice-assistant
+
+# 安装依赖
+uv sync
+```
+
+### 2️⃣ 配置 API Key
+
+```bash
+# 复制配置文件
+cp .env.example .env
+
+# 编辑 .env，至少配置一个 LLM API Key
+```
+
+**推荐使用 Qwen**（有免费额度）：
+```bash
+LLM_SERVICE=qwen
+QWEN_API_KEY=your-qwen-api-key-here
+```
+
+[获取 API Key →](https://dashscope.console.aliyun.com/)
+
+### 3️⃣ 启动程序
+
+```bash
+uv run python main.py
+```
+
+### 4️⃣ 开始对话
+
+说出唤醒词：
+- "小智"
+- "你好助手"
+- "智能助手"
+
+---
+
+## 📚 文档导航
+
+| 文档 | 说明 |
+|------|------|
+| **[快速开始指南](QUICKSTART.md)** | 5 分钟快速上手 |
+| **[配置方案对比](docs/CONFIG_COMPARISON.md)** | 选择合适的配置方案 |
+| **[完整配置文档](.env.example)** | 所有配置参数说明 |
+| **[WebSocket TTS 指南](docs/QWEN_TTS_REALTIME.md)** | 实时语音合成详细说明 |
+| **[TTS 迁移指南](docs/TTS_MIGRATION_GUIDE.md)** | 从 HTTP 切换到 WebSocket |
+
+---
 
 ## ✨ 特性
 
@@ -42,10 +99,12 @@
   - 支持自定义技能扩展
   - 零停用词、零关键词匹配、零干扰
 
-- **🔊 语音合成**: 多引擎支持
-  - **Piper TTS** - 本地超低延迟（推荐）⚡
-  - **RealtimeTTS** - 流式实时播放 🎵
-  - **MeloTTS** - 中英文混合支持 🌐
+- **🔊 语音合成**: 多引擎支持，低延迟流式播放 ⚡
+  - **Piper TTS** - 本地超低延迟（<100ms，推荐开发）
+  - **DashScope Realtime** - WebSocket 实时合成（~100-200ms，推荐生产）🆕
+  - **DashScope HTTP** - HTTP 流式合成（~300ms，稳定可靠）
+  - **Edge TTS** - 微软免费 API
+  - **Azure TTS** - 高质量付费 API
 
 - **👁️ 视觉理解**: 多模型支持（可配置切换）
   - **Moondream（本地）** - 完全离线，保护隐私
@@ -744,6 +803,40 @@ A:
 ---
 
 ## 🔥 最近更新
+
+### v2.9.0 (2025-04-01) - WebSocket 实时语音合成 🆕
+
+**🔥 WebSocket 实时 TTS**: 基于 Qwen-TTS-Realtime 的 WebSocket 流式语音合成
+
+- **首包延迟**: ~100-200ms（相比 HTTP 流式的 ~300ms）
+- **交互模式**: 支持 `server_commit`（自动）和 `commit`（手动）
+- **指令控制**: 支持语速、语调、音量等精细控制
+- **完整集成**: 符合 Pipecat Pipeline 标准
+
+**配置示例**：
+```bash
+TTS_SERVICE=dashscope_realtime
+DASHSCOPE_REALTIME_MODEL=qwen3-tts-flash-realtime
+DASHSCOPE_REALTIME_VOICE=Cherry
+DASHSCOPE_REALTIME_MODE=server_commit
+```
+
+**详细文档**：
+- [完整使用指南](docs/QWEN_TTS_REALTIME.md)
+- [配置示例](.env.realtime.example)
+- [测试代码](test_realtime_tts.py)
+
+**TTS 服务对比**：
+
+| 引擎 | 延迟 | 音质 | 成本 | 推荐场景 |
+|------|------|------|------|---------|
+| Piper（本地） | <100ms | ⭐⭐⭐ | 免费 | 开发环境 |
+| DashScope Realtime（WebSocket） | ~100-200ms | ⭐⭐⭐⭐⭐ | 低 | 实时对话 🆕 |
+| DashScope HTTP | ~300ms | ⭐⭐⭐⭐⭐ | 低 | 生产环境 |
+
+---
+
+### v2.8.0 (2025-03-31)
 
 ### v2.9.0 - RNNoise 降噪 + Agent Skills + Claude Code 设计（2025-03-25）
 
