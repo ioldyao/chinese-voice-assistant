@@ -123,11 +123,6 @@ uv run python main.py
   - 可选降噪模式：rnnoise / noise_gate / pass_through
   - 仅影响 ASR，保持原始音频质量
 
-- **⏰ Idle Detection**: 智能空闲检测
-  - 3分钟无活动自动结束对话
-  - 播放告别语音
-  - 可自定义超时时间
-  - Pipeline 事件处理器
 
 - **🎧 音频设备配置**: 交互式设备选择
   - 启动时自动检测音频设备
@@ -152,7 +147,6 @@ uv run python main.py
   - ✅ soxr 高质量重采样
   - ✅ 仅影响 ASR，保持原始音频
   - ✅ 可选降噪模式
-- ⏰ **Idle Detection** - 智能空闲检测和自动退出✨
   - ✅ 3分钟无活动自动结束
   - ✅ Pipeline 事件处理器
   - ✅ 可自定义超时时间
@@ -180,7 +174,6 @@ uv run python main.py
 - ✨ Context Aggregator（自动管理历史）
 - ✨ Function Calling（MCP 工具集成）
 - ✨ VAD + Smart Turn（Silero VAD + Smart Turn v3）
-- ✨ Idle Detection（Pipeline 事件处理）
 
 ---
 
@@ -535,7 +528,6 @@ chinese-voice-assistant/
 │   │                         # - 符合官方架构
 │   │                         # - LLM 工厂模式
 │   │                         # - Agent Skills 集成
-│   │                         # - Idle Detection
 │   ├── pyaudio_transport.py  # PyAudio Transport
 │   │                         # - 标准 BaseTransport 实现
 │   ├── audio_processors.py   # 音频处理器
@@ -664,7 +656,6 @@ Pipeline:
 - ✅ 避免句子中间被打断
 - ✅ 支持 23 种语言
 - ✅ **RNNoise 降噪**（深度学习音频处理，<5ms 延迟）✨
-- ✅ **Idle Detection**（3分钟无活动自动结束）✨
 - ✅ **Agent Skills**（LLM 自主判断使用技能）✨
 - ✅ **多 LLM 支持**（Qwen/DeepSeek/OpenAI/Anthropic）✨
 
@@ -743,7 +734,6 @@ Pipeline([
 | 实时框架 | Pipecat AI v0.0.98 | Frame/Pipeline/Processor |
 | 音频I/O | PyAudio | 录音播放 |
 | 音频降噪 | RNNoise + soxr | 深度学习降噪 + 高质量重采样 ✨ |
-| 空闲检测 | Idle Detection | 3分钟无活动自动退出 ✨ |
 | **视觉理解** | | |
 | 多模态模型 | Qwen-VL-Max | 屏幕内容分析 |
 | 截图工具 | PIL ImageGrab | 屏幕截图 |
@@ -854,7 +844,6 @@ DASHSCOPE_REALTIME_MODE=server_commit
    - 可选降噪模式：rnnoise / noise_gate / pass_through
    - 仅影响 ASR，保持原始音频质量
 
-3. **Idle Detection** - 智能空闲检测
    - 3分钟无活动自动结束对话
    - 播放告别语音
    - 可自定义超时时间
@@ -891,13 +880,6 @@ noise_reduction_proc = create_noise_reduction_processor(
     enable_debug=False
 )
 
-# Idle Detection
-task = PipelineTask(
-    pipeline,
-    idle_timeout_secs=180,  # 3分钟
-    cancel_on_idle_timeout=False
-)
-
 # Anthropic Claude
 llm = create_llm_service(
     service="anthropic",
@@ -924,7 +906,6 @@ llm = create_llm_service(
 #### 🎯 技术亮点
 - ✅ Agent Skills - Claude Code 设计，LLM 自主判断
 - ✅ RNNoise 降噪 - 深度学习音频处理
-- ✅ Idle Detection - 智能空闲检测和自动退出
 - ✅ 音频设备配置 - 交互式设备选择
 - ✅ Anthropic Claude - 扩展模型支持
 - ✅ Open-Meteo API - 免费天气查询

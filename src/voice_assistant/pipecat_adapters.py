@@ -459,8 +459,8 @@ class PiperTTSProcessor(FrameProcessor):
         # Piper TTS
         if self.tts.engine_type == "piper":
             try:
-                # 使用 Piper TTS 生成音频
-                audio_generator = self.tts.piper_voice.synthesize(text)
+                # 使用 Piper TTS 生成音频（使用预设参数）
+                audio_generator = self.tts.piper_voice.synthesize(text, syn_config=self.tts.syn_config)
 
                 for chunk in audio_generator:
                     # 检查中断标志

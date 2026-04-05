@@ -91,6 +91,13 @@ PIPER_TTS_MODEL_PATH = os.getenv(
     str(MODELS_DIR / "piper" / "zh_CN-huayan-medium.onnx")
 )
 
+# Piper TTS 合成参数（调节音色和语速）
+PIPER_VOLUME = float(os.getenv("PIPER_VOLUME", "1.0"))  # 音量 (0.1-2.0, 1.0 = 正常)
+PIPER_LENGTH_SCALE = float(os.getenv("PIPER_LENGTH_SCALE", "1.0"))  # 语速 (0.5-2.0, 1.0 = 正常, <1 = 快, >1 = 慢)
+PIPER_NOISE_SCALE = float(os.getenv("PIPER_NOISE_SCALE", "0.667"))  # 音频变化 (0.1-1.0, 0.667 = 自然)
+PIPER_NOISE_W_SCALE = float(os.getenv("PIPER_NOISE_W_SCALE", "0.8"))  # 说话变化 (0.1-1.0, 0.8 = 自然)
+PIPER_NORMALIZE_AUDIO = os.getenv("PIPER_NORMALIZE_AUDIO", "true").lower() == "true"  # 是否标准化音频
+
 # DashScope TTS 配置（阿里云，音质好，HTTP 流式）
 DASHSCOPE_TTS_MODEL = os.getenv("DASHSCOPE_TTS_MODEL", "qwen3-tts-flash")
 DASHSCOPE_TTS_VOICE = os.getenv("DASHSCOPE_TTS_VOICE", "Cherry")

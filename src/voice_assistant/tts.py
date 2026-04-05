@@ -45,8 +45,15 @@ class TTSManager:
 
         # Piper 引擎（本地，最快）
         if engine_type == "piper":
-            from piper import PiperVoice
+            from piper import PiperVoice, SynthesisConfig
             from pathlib import Path
+            from .config import (
+                PIPER_VOLUME,
+                PIPER_LENGTH_SCALE,
+                PIPER_NOISE_SCALE,
+                PIPER_NOISE_W_SCALE,
+                PIPER_NORMALIZE_AUDIO
+            )
 
             # 默认模型路径
             if model_path is None:
@@ -60,11 +67,25 @@ class TTSManager:
 
             print(f"正在加载 Piper 模型: {model_path}")
             self.piper_voice = PiperVoice.load(str(model_path))
+
+            # ✅ 创建合成配置（使用预设参数）
+            self.syn_config = SynthesisConfig(
+                volume=PIPER_VOLUME,
+                length_scale=PIPER_LENGTH_SCALE,
+                noise_scale=PIPER_NOISE_SCALE,
+                noise_w_scale=PIPER_NOISE_W_SCALE,
+                normalize_audio=PIPER_NORMALIZE_AUDIO
+            )
+
             self.p = pyaudio.PyAudio()
             self.should_stop = False
             self.current_stream = None
 
             print(f"✓ 使用 Piper TTS（本地，超快）- 模型: {Path(model_path).name}")
+            print(f"  - 语速: {PIPER_LENGTH_SCALE}x (<1 = 快, >1 = 慢)")
+            print(f"  - 音量: {PIPER_VOLUME}x")
+            print(f"  - 音频变化: {PIPER_NOISE_SCALE} (0.667 = 自然)")
+            print(f"  - 说话变化: {PIPER_NOISE_W_SCALE} (0.8 = 自然)")
             return
 
         # DashScope 引擎（流式合成）
@@ -275,7 +296,7 @@ class TTSManager:
                 self.should_stop = False
 
                 # 生成音频（返回生成器，产生 AudioChunk 对象）
-                audio_generator = self.piper_voice.synthesize(text)
+                audio_generator = self.piper_voice.synthesize(text, syn_config=self.syn_config)
 
                 # 遍历所有 AudioChunk（可能有多个）
                 for chunk in audio_generator:

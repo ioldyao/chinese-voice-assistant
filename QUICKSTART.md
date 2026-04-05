@@ -234,7 +234,6 @@ TTS_SERVICE=dashscope
 - 🔧 **MCP 工具**：Playwright 浏览器控制
 - 🛠️ **Agent Skills**：LLM 自主判断技能使用
 - 🔇 **音频降噪**：RNNoise + soxr
-- ⏰ **空闲检测**：3 分钟无活动自动结束
 
 ### 📊 架构特点
 
