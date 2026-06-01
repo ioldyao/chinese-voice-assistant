@@ -1,7 +1,7 @@
 [project]
 name = "voice-assistant"
-version = "2.9.0"
-description = "智能语音助手 - RNNoise 降噪 + Agent Skills + MCP + Pipecat (KWS + ASR + MCP + Skills)"
+version = "2.7.0"
+description = "智能语音助手 - Pipecat 官方架构 + Agent Skills + MCP (KWS + ASR + TTS + LLM)"
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [
