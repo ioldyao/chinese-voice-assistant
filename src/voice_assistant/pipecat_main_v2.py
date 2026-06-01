@@ -75,6 +75,10 @@ from .config import (
     ANTHROPIC_ENABLE_THINKING, ANTHROPIC_THINKING_EFFORT,
     load_mcp_servers_config,
     get_mcp_server_info,
+    TTS_SERVICE,
+    DASHSCOPE_REALTIME_MODEL,
+    DASHSCOPE_REALTIME_VOICE,
+    DASHSCOPE_REALTIME_MODE,
 )
 
 # ✅ 导入 Agent Skills（Claude Code 设计）
@@ -399,8 +403,29 @@ async def create_pipecat_pipeline():
         # use_cpu=False         # 可选：是否使用 CPU（仅 Moondream）
     )
 
-    # TTS Processor（不传入 transport）
-    tts_proc = PiperTTSProcessor(wake_system.agent.tts)
+    # TTS Processor（根据配置选择引擎）
+    if TTS_SERVICE == "dashscope_realtime":
+        # ✅ WebSocket Realtime TTS（低延迟，推荐）
+        print("⏳ 尝试初始化 DashScope Realtime TTS（WebSocket）...")
+        try:
+            from .tts_realtime_adapter import QwenRealtimeTTSProcessor
+
+            tts_proc = QwenRealtimeTTSProcessor(
+                model=DASHSCOPE_REALTIME_MODEL,
+                voice=DASHSCOPE_REALTIME_VOICE,
+                mode=DASHSCOPE_REALTIME_MODE,
+                api_key=QWEN_API_KEY
+            )
+            print("✓ DashScope Realtime TTS 配置成功")
+            print("  注意：WebSocket TTS 将在首次使用时初始化连接")
+        except Exception as e:
+            print(f"⚠️  DashScope Realtime TTS 配置失败: {e}")
+            print("   降级使用 Piper TTS（本地引擎）")
+            print("   提示：如需使用 WebSocket TTS，请确保安装了 dashscope>=1.25.11")
+            tts_proc = PiperTTSProcessor(wake_system.agent.tts)
+    else:
+        # 标准 TTS（Piper | DashScope HTTP | Edge | Azure）
+        tts_proc = PiperTTSProcessor(wake_system.agent.tts)
 
     print("✓ Processors 已创建")
 
@@ -497,7 +522,7 @@ async def main():
         # 创建 Pipeline
         pipeline, transport, wake_system, mcp, skill_manager, vision_proc = await create_pipecat_pipeline()
 
-        # 创建 PipelineTask（添加 Idle Detection）
+        # 创建 PipelineTask
         task = PipelineTask(
             pipeline,
             params=PipelineParams(
@@ -507,8 +532,6 @@ async def main():
                 enable_heartbeats=True,  # ✅ 启用心跳监控（调试用）
                 enable_metrics=True,  # ✅ 启用性能指标
             ),
-            idle_timeout_secs=180,  # ✅ 3分钟无活动认为空闲
-            cancel_on_idle_timeout=False,  # ✅ 不自动取消，自定义处理
         )
 
         # ✅ 注册事件处理器
@@ -526,14 +549,6 @@ async def main():
                 logger.info("✅ Pipeline 正常结束")
             elif isinstance(frame, CancelFrame):
                 logger.info("⏹️ Pipeline 已取消")
-
-        @task.event_handler("on_idle_timeout")
-        async def on_idle_timeout(task):
-            logger.info("⏰ 用户长时间未说话（3分钟），准备结束对话")
-            # 播放告别语音
-            await task.queue_frame(TTSSpeakFrame("长时间未检测到语音，再见！"))
-            # 结束对话
-            await task.queue_frame(EndFrame())
 
         # 发送 StartFrame 初始化
         await task.queue_frames([StartFrame()])
